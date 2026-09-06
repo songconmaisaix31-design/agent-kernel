@@ -1,4 +1,80 @@
-# Orca v1.4.188 最小接入研究
+# Orca v1.4.188 接入与服务层验收
+
+本页保留首批接入研究，并记录 2026-09-07 本批实际实现。唯一执行状态见 [V01-TODO.md](../V01-TODO.md)，下方“首批历史研究”不是另一份活跃计划。
+
+## 已实现入口
+
+受测候选 `0c4286d722342d0a2155a1e6d2e7c5637c94f61a`，基于固定 U=`f32ce859047a85a3ea4f507f633604dfbf596a0e`。A 迁移 `7a2e4db8727ab0a8af4745a2f31a2be9219f3ffc`、B 接入 `8c4f3045771e98014cf56709086b786fcb74eb0c` 均为候选祖先，候选 src 与 B 提交一致；集成未修改领域代码。
+
+- `src/main/runtime/rpc/methods/orchestration-runs.ts`：真实已注册的 `orchestration.runUse` 接受可选 `kernel: {repoId, plan}`。调用者必须提供原生受验证的当前协调者身份；任务 key 必须对应本 Run 真实 Task，依赖与原生 Task 一致。省略 kernel 保持配置，显式 null 在无活跃/未释放资源时关闭；本批没有新 CLI 参数或 UI。
+- `orchestration-workers.ts`：在远端分支和资源创建前执行 `admitKernelWorkerStart`，只允许受管本地 Git new-top-level，并固定 repo/baseCommit。异步准备后再次核对配置/任务；`createStartingWorkerDispatch` 在既有 BEGIN IMMEDIATE 中复核，在写 receipt/dispatch/资源前拒绝过时策略。
+- `orchestration.ts`：真实低层 dispatch handler 在 dryRun 和异步准备后拒绝受管 Run；`createDispatchContext` 在既有 SAVEPOINT 内再次检查。受管 existing/child/terminal/folder/SSH/远端/WSL 均拒绝；关闭模式保留原生本地和远端行为。
+- `kernel-run-config.ts` 和原 DB schema：可空 `runs.kernel_config`，schema 29→30 加性迁移；SQL NULL 表示关闭，损坏 JSON、序列化 null、未知版本等拒绝，不能静默降级。
+
+合法计划的服务层测试调用真实 runUse→workerStart 注册函数及 SQLite，验证进入原生创建/派发流程；非法、无权限、请求内假关闭、配置变化、Task 变化和未支持路径测试验证资源边界未调用。原生身份校验器是真实函数；终端、工作树创建及资源观测是测试替身，所以“原生流程通过”仅指服务层集成，不等于启动真实 Kernel Worker。
+
+## 实际发现与执行
+
+Windows / Node 24.16.0 / pnpm 10.24.0 / Vitest 4.1.5 / TypeScript 7.0.2。使用上游原 `config/vitest.config.ts`，新测试位于其 `src/**/*.test.ts` 范围；原 A 的 121 条 node:test 只改 Vitest 注册和导入，原规则实现逐字节保留。
+
+| 测试文件 | 实际发现 | 实际执行/通过 |
+|---|---:|---:|
+| kernel-plan.test.ts | 121 | 121 |
+| kernel-run-config.test.ts | 18 | 18 |
+| orchestration-kernel.test.ts | 36 | 36 |
+| orchestration-runs.test.ts | 18 | 18 |
+| orchestration-tasks-dispatch.test.ts | 30 | 30 |
+| orchestration-workers-new-worktree.test.ts | 20 | 20 |
+| orchestration-federation.test.ts | 18 | 18 |
+| orchestration-worker-dispatch-db.test.ts | 12 | 12 |
+| orchestration-version-skew-migration.test.ts | 2 | 2 |
+| 合计（9 个文件） | 275 | 275 |
+
+最终 list/run 退出码均为 0，失败 0、跳过 0。275 中新增/迁移的三文件为 175 条，其余 100 条是所选原生回归；不是全仓所有测试。Federation 回归输出的模拟断线 stderr 属于通过的预期场景。
+
+使用的 PowerShell 命令如下；输出目录为仓库外临时证据目录。list 的 `--json=路径` 必须明确指定，避免可选参数吞掉首个测试路径。
+
+```powershell
+$evidence = Join-Path $env:TEMP ('orca-kernel-service-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+New-Item -ItemType Directory -Path $evidence -ErrorAction Stop
+$env:ELECTRON_OVERRIDE_DIST_PATH = Join-Path $evidence 'electron-not-installed'
+$files = @(
+  'src/main/runtime/orchestration/kernel-plan.test.ts'
+  'src/main/runtime/orchestration/kernel-run-config.test.ts'
+  'src/main/runtime/rpc/methods/orchestration-kernel.test.ts'
+  'src/main/runtime/rpc/methods/orchestration-runs.test.ts'
+  'src/main/runtime/rpc/methods/orchestration-tasks-dispatch.test.ts'
+  'src/main/runtime/rpc/methods/orchestration-workers-new-worktree.test.ts'
+  'src/main/runtime/rpc/methods/orchestration-federation.test.ts'
+  'src/main/runtime/orchestration/orchestration-worker-dispatch-db.test.ts'
+  'src/main/runtime/orchestration/orchestration-version-skew-migration.test.ts'
+)
+pnpm exec vitest list --config config/vitest.config.ts @files --json="$evidence/list.json"
+if ($LASTEXITCODE -ne 0) { throw 'Vitest discovery failed' }
+pnpm exec vitest run --config config/vitest.config.ts @files --reporter=default --reporter=json --outputFile.json="$evidence/run.json"
+if ($LASTEXITCODE -ne 0) { throw 'Vitest execution failed' }
+pnpm run typecheck
+if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed' }
+pnpm exec tsc --noEmit -p config/tsconfig.node.json --listFilesOnly > "$evidence/node-files.txt"
+if ($LASTEXITCODE -ne 0) { throw 'TypeScript file discovery failed' }
+$env:ORCA_ELECTRON_VITE_TARGET = 'main'
+node config/scripts/run-electron-vite-build.mjs --config config/electron-vite-target.config.ts --ignoreConfigWarning
+if ($LASTEXITCODE -ne 0) { throw 'Main build failed' }
+```
+
+`pnpm run typecheck` 原脚本检查 node、tc.cli、tc.web 三项目，实际退出 0。listFilesOnly 是附加收录核查，不能替代该类型检查；实测包含 kernel-plan、kernel-run-config、orchestration-kernel-admission 及相邻新测试。main 目标采用上游已有目标配置，实际构建退出 0，out/main/index.js 内检出 validatePlan、admitKernelWorkerStart、assertKernelWorkerPolicy。没有修改 tsconfig/Vitest/build 配置，没有将 Node 执行 TypeScript 当作类型检查。
+
+原始 stdout/stderr、发现 JSON、执行 JSON 和逐文件计数保留在本机实验目录的 `candidate-20260907-0c4286d` 子目录；公开仓库记录可复现命令和汇总，不迁入认证、完整记忆或私有业务资料。
+
+## 修复经过与验证边界
+
+- 依赖按锁文件安装且跳过 install scripts，但 Electron 包 require 仍可能触发自身安装。B 首轮服务测试确实触发过一次失败的隐式安装，已停止；之后测试/构建均设置当前进程的不存在 Electron 路径，避免自动下载/运行。这个设置不是实际 Electron 运行环境通过。
+- C 首次 list 参数误将测试源码当 JSON 输出文件，首轮 run 失败；已保留误输出并从当前 HEAD 原样恢复，改为明确输出路径后重新发现和执行全部 275 条。没有删断言或改领域源码。
+- main 首轮因稀疏工作树缺少固定上游资源失败；总控从 U 补齐 icon/app-icons/tray/notification-sounds 后重跑成功。许可证、锁文件、根配置及业务代码不因此修改；上游 SSH 动态/静态导入提示保留。
+- C 原生派发的两次 agent_prompt_stalled 回执仍为 failed。复用同一个 C，以普通 CLI 交接完成合并、测试、构建、push 和 status 报告；源码结果不被冒充为成功的 worker_done。
+- 未运行完整所有 Vitest、完整 renderer/桌面打包、真实 Worker 启动/停止或 12 次 CURRENT/KERNEL 实验。原生 completed 不是 Kernel accepted/merged；词法路径契约不是文件系统沙箱。本批服务准入成果不放行整个 v0.1。
+
+## 首批历史研究（固定 U；下文“待补/未执行”是当时状态）
 
 2026-09-06 · B 接入轨 · 规划基线 `14c174adf1b3dd373a83b437467d43f60f2a6073`。本文保留首批只读研究结论；来源库是独立前期成果库，当前 GitHub 实测为公开。正式开发已迁至获准复用的公开 Orca Fork，实时状态仅见 ../V01-TODO.md。A 唯一维护计划类型，本轨不另定义字段或调度器。
 
@@ -8,7 +84,7 @@
 
 **关键更正：U 没有手册引用的 `orchestration-dispatch-methods.ts`（固定 tag 请求返回 404）；低层 dispatch 在 `orchestration.ts:1587`。不存在一个已读到的、包办两条路径且早于全部资源副作用的专用 Kernel 入口。** 最小建议是在两个服务端 handler 共用准入函数，并在各自既有数据库事务内复核并占用；只拦 CLI、renderer 或最后一次发送提示词均不足。
 
-| 上游已做 | CURRENT/Kit 已做 | 仍需补充 |
+| 上游已做 | CURRENT 已做 | 仍需补充 |
 |---|---|---|
 | 原生 Run/Task/Dispatch、身份绑定、监督 Worker、消息及结果、停止与资源归属 | 手册冻结的人工分工、写路径、测试与提交协议；本批未验证其机器强制能力 | 受信计划、Run 开关、全部受管入口的准入与容量检查、实际候选验收 |
 | SQLite 事务、启动阶段和 mutation receipt、失败/重试身份 | 本批未定位可直接复用的可执行拦截器 | 沿这些原生事实补规则，不建新 Task/Attempt/Manifest/Hash 或完成证明系统 |
