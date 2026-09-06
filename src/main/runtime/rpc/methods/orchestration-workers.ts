@@ -20,12 +20,20 @@ import {
 } from './orchestration-worker-setup-gate'
 import { failWorkerStartWithReceipt } from './orchestration-worker-start-receipt'
 import { prepareLocalWorkerStart } from './orchestration-worker-start-validation'
+import {
+  admitKernelWorkerStart,
+  requireKernelLocalRepo,
+  recheckKernelWorkerStart
+} from './orchestration-kernel-admission'
 
 export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.workerStart',
     params: WorkerStartParams,
-    handler: async (params, { runtime, orchestrationMutation }) => {
+    handler: async (
+      params,
+      { runtime, orchestrationMutation, orchestrationCompatibilityEvidence }
+    ) => {
       const db = runtime.getOrchestrationDb()
       const coordinatorPane = runtime.getTerminalPaneKey(params.from)
       const run = coordinatorPane ? db.getCurrentRunForPane(coordinatorPane) : undefined
@@ -43,6 +51,12 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         )
       }
 
+      const kernelSnapshot = admitKernelWorkerStart(
+        runtime,
+        run.id,
+        params,
+        orchestrationCompatibilityEvidence
+      )
       if (params.on) {
         return startFederatedWorker({
           params,
@@ -92,6 +106,9 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         }
       }
 
+      if (kernelSnapshot !== null) {
+        await requireKernelLocalRepo(runtime, kernelSnapshot, params)
+      }
       const startOptions = {
         worktree: requestedWorktree,
         resolvedWorktreeId: resolvedWorktree?.id ?? null,
@@ -109,8 +126,16 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
             : 'orchestration_default'
           : 'existing_worktree'
       }
+      recheckKernelWorkerStart(
+        runtime,
+        run.id,
+        params,
+        kernelSnapshot,
+        orchestrationCompatibilityEvidence
+      )
       const started = db.createStartingWorkerDispatch({
         taskId: task.id,
+        expectedKernelConfig: kernelSnapshot,
         retryOf: params.retryOf,
         startOptions,
         runtimeEpoch: runtime.getRuntimeId(),

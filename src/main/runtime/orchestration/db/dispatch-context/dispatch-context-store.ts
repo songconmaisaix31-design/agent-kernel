@@ -5,6 +5,7 @@ import { CURRENT_CONTRACT_VERSION } from '../contract-constants'
 import { generateId } from '../generated-id'
 import { DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL, paneKeyMatchSuffix } from '../pane-key-match'
 import type { OrchestrationDb } from '../orchestration-db'
+import { assertKernelLowLevelDispatch } from '../../kernel-run-config'
 
 export const DISPATCH_CONTEXT_CLAIM_SQL = `INSERT INTO dispatch_contexts (
   id, run_id, task_id, contract_version, launch_token_hash,
@@ -73,6 +74,7 @@ export function createDispatchContext(
   const id = generateId('ctx')
   this.db.exec('SAVEPOINT create_dispatch_context')
   try {
+    assertKernelLowLevelDispatch(this, taskId)
     const inserted = this.db
       .prepare(DISPATCH_CONTEXT_CLAIM_SQL)
       .run(

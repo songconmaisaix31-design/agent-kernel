@@ -8,6 +8,8 @@ import type {
 } from '../../orca-runtime'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 import { assertCallerHandleMatchesEvidence } from './orchestration-run-scope'
+import { configureKernelRun } from '../../orchestration/kernel-run-config'
+import { requireKernelCoordinator } from './orchestration-kernel-admission'
 
 const RunCreateParams = z.object({
   objective: requiredString('Missing --objective'),
@@ -17,7 +19,8 @@ const RunCreateParams = z.object({
 const RunUseParams = z.object({
   id: requiredString('Missing --id'),
   from: requiredString('Missing coordinator terminal'),
-  takeoverLegacy: OptionalBoolean
+  takeoverLegacy: OptionalBoolean,
+  kernel: z.unknown().optional()
 })
 
 const RunCurrentParams = z.object({ from: requiredString('Missing coordinator terminal') })
@@ -78,6 +81,19 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
         orchestrationCompatibilityCallerAuthority: callerAuthority
       }
     ) => {
+      const storedRun = runtime.getOrchestrationDb().getRun(params.id)
+      if (params.kernel !== undefined || storedRun?.kernel_config != null) {
+        const current = requireKernelCoordinator(
+          runtime,
+          params.id,
+          params.from,
+          orchestrationCompatibilityEvidence
+        )
+        if (params.kernel !== undefined) {
+          const run = configureKernelRun(runtime.getOrchestrationDb(), current, params.kernel)
+          return { run, binding: { consumerGeneration: run.consumer_generation } }
+        }
+      }
       const paneKey = requireCallerPane(runtime, params.from, callerAuthority)
       if (
         params.takeoverLegacy &&

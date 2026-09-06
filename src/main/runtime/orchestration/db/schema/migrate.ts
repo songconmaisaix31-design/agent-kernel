@@ -16,6 +16,9 @@ export function migrate(this: OrchestrationDb): void {
   try {
     applySchemaMigrationsV2ToV12.call(this, current)
     applySchemaMigrationsV13ToV29.call(this, current)
+    if (current < 30 && !this.hasColumn('runs', 'kernel_config')) {
+      this.db.exec('ALTER TABLE runs ADD COLUMN kernel_config TEXT')
+    }
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
     this.db.exec('COMMIT')
   } catch (err) {
