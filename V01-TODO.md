@@ -11,7 +11,7 @@
 | 轨道 | 固定 Worker / 文件责任 | 当前状态 |
 |---|---|---|
 | A 规则 | 原规则 Worker；Worktree kernel-v01-rules / Branch songconmaisaix31-design/kernel-v01-rules；src/main/runtime/orchestration/kernel-plan.ts、kernel-plan.test.ts | 将来源 5d2f78d9077a8a14abe20a1136e3c83a4955773c 的实现及 121 条 Node 测试迁到上游 Vitest；Plan 字段与语义保持 |
-| B 接入 | 原接入 Worker；Worktree kernel-v01-integration / Branch songconmaisaix31-design/kernel-v01-integration；Run types、kernel-run-config、DB schema/migrate/constants、RPC orchestration-runs/workers/orchestration 、orchestration-kernel-admission.ts 与相邻接入测试 | 实现服务端持久化配置、协调者权限、派发检查及真实 DB/handler 测试；不写 A 文件 |
+| B 接入 | 原接入 Worker；Worktree kernel-v01-integration / Branch songconmaisaix31-design/kernel-v01-integration；Run types、kernel-run-config、DB schema/migrate/constants、RPC orchestration-runs/workers/orchestration 、orchestration-kernel-admission.ts、DB worker-dispatch-start / dispatch-context-store 与相邻接入测试 | 实现服务端持久化配置、协调者权限、派发检查及真实 DB/handler 测试；不写 A 文件 |
 | 总控 | 本看板、来源记录、验收；唯一环境执行者 | 固定源码和依赖准备、隐私检查、验收及远端核对；不写业务代码 |
 
 每轨一个正式 Worktree 和 Branch；旧终端仅保留原会话作为宿主，实际读写必须显式指定新工作目录。开发、测试、返修由原 Worker 持续承担并 commit + 普通 push。两轨完成后由一个集成 Worker 合并，领域失败退原 owner。
@@ -45,3 +45,11 @@ CURRENT 仍为 Codex 内置提示词＋长期记忆＋提示词钩子＋Orca 1.4
 既定项目、实验目录和已有预算内的开发、测试、返修、commit、普通 push 与集成无需逐关审批。环境、认证和正式实验预算不阻塞无依赖源码；G00 未通过不冻结全项目。仅不可逆操作、提权/重启、权限扩大、新增收费/超预算及重大产品决定请求用户确认。公开 Fork 已获明确授权。
 
 不建设新调度器、运行时、消息系统或工作台；不改日常 Orca/.codex/记忆，不降级 sandbox，不启动未通过隔离的模型实验。唯一环境执行者为总控；保留已有失败现场，不重复 Docker/WSL 路线。原始需求、CURRENT 正文和环境历史按旧库固定 SHA 链接留存，不把完整记忆或认证材料迁入公开 Fork。
+
+## 当前批次新增实证
+
+- 正式 Fork 基线分支 `kernel/v01-upstream-base` 已由 GitHub 返回 U，并经 git ls-remote 独立核实；文档分支 `kernel/v01-managed-dispatch` 的迁移提交 `c3e8bdce8a92bb041562437cf5db48d5dcf9b512` 已普通 push 且远端一致。Fork 原 main 保留。
+- 旧库指向迁移提交 `68e84c6f22b50676ab8a964af0a7b8dbb1223fd5` 已普通 push、远端一致、工作区干净；08d1ff6 仍为祖先。原 G00/CURRENT 正文逐字节保留，仅加归档声明；原完整手册在固定首批 SHA 可读。
+- A 迁移提交 `7a2e4db8727ab0a8af4745a2f31a2be9219f3ffc` 已普通 push、远端一致。validatePlan 的 Git blob 与 5d2f78d 来源逐字节一致；测试仅切换 Vitest 注册和同目录导入。上游 config/vitest.config.ts 实际发现 121、执行通过 121；严格单模块 tsc 7.0.2 通过，完整项目配置检查仍待源码补齐，不把局部检查当全仓通过。
+- 环境只准备实验开发 Worktree 的 Node 24.16.0 / pnpm 10.24.0，采用 frozen-lockfile + ignore-scripts；A/B 各有独立 node_modules，复用下载缓存。上游 LICENSE、package.json、锁文件和根工程配置未改。未执行 Electron/native 生命周期、日常运行时启动、Docker/WSL 重试或模型实验。
+- B 已写入受管配置和派发服务，在现有事务内复核策略；测试包含真实 handler、SQLite、真实调用者证明校验器，并替换终端/资源观测边界。尚待实际运行结果，不计真实 Worker 通过。
