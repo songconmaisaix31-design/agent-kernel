@@ -4,12 +4,14 @@ import { ensureMutationReceiptCapacity } from '../../mutation-receipt-capacity'
 import { CURRENT_CONTRACT_VERSION } from '../contract-constants'
 import { generateId } from '../generated-id'
 import type { OrchestrationDb } from '../orchestration-db'
+import { assertKernelWorkerPolicy } from '../../kernel-run-config'
 
 export function createStartingWorkerDispatch(
   this: OrchestrationDb,
   params: {
     taskId: string
     startOptions: unknown
+    expectedKernelConfig?: string | null
     launchTokenHash?: string
     retryOf?: string
     runtimeEpoch?: string
@@ -29,6 +31,7 @@ export function createStartingWorkerDispatch(
 ): { dispatch: DispatchContextRow; worker: WorkerDispatchRow } {
   this.db.exec('BEGIN IMMEDIATE')
   try {
+    assertKernelWorkerPolicy(this, params.taskId, params.expectedKernelConfig)
     if (params.mutationReceipt) {
       const receipt = params.mutationReceipt
       const existing = this.getMutationReceipt(receipt.callerFingerprint, receipt.requestId)

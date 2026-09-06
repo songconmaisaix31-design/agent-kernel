@@ -29,6 +29,7 @@ import {
 } from './orchestration-recipient-routing'
 import { resolveRunScope } from './orchestration-run-scope'
 import { ORCHESTRATION_RUN_METHODS } from './orchestration-runs'
+import { rejectKernelDispatch } from './orchestration-kernel-admission'
 import { ORCHESTRATION_WORKER_METHODS } from './orchestration-worker-methods'
 import { ORCHESTRATION_FEDERATION_METHODS } from './orchestration-federation-methods'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
@@ -1615,6 +1616,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       // Why: dry-run previews the preamble without mutating state, so it skips the ready-status check and uses a placeholder dispatchId.
+      rejectKernelDispatch(runtime, run)
       if (params.dryRun) {
         const preamble = buildDispatchPreamble({
           taskId: task.id,
@@ -1666,6 +1668,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       revalidateLegacyCoordinator?.()
+      rejectKernelDispatch(runtime, run)
       const ctx = db.createDispatchContext(
         params.task,
         to,
