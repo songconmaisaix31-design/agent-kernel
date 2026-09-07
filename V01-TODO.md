@@ -1,5 +1,32 @@
 # 当前窄批次：批准正文与真实独立 Worker 冒烟（2026-09-07）
 
+## 20:10 续批实际收口：依赖通过，启动保护边界未通过
+
+源码仍为 `64d28fdb4834b5f104c9f64be958399f2f9ffe3c`，固定上游仍为 v1.4.188 / `f32ce859047a85a3ea4f507f633604dfbf596a0e`。本续批没有业务代码、依赖版本或锁文件变更。环境证据来自候选分支 `d37cde7063f0a88975017a3acbf82364bd08ca3a`，三个文档提交按序迁入本分支，原 A/B 成果不变。详见 [Windows 实际检查与失败证据](docs/WINDOWS-MANAGED-SMOKE.md)。
+
+- 已核验并解压缓存 Electron 43.1.0 win32-x64 到批准的实验 runtime 目录；已核验 realpath 后复制现有 Orca 的 registry 3.2.2 x64 原生产物到候选专属依赖目录，来源不动、无指回 CURRENT 的新可写链接。二进制只留本机。
+- 候选 Electron 执行 `config/scripts/ensure-native-runtime.mjs --check-only`，registry 与 PTY 检查 exit 0。检查使用的 `ELECTRON_RUN_AS_NODE` 已清除。测试用 Electron override 不可作为桌面启动配置；桌面启动前配置和 CLI/runtime 握手未执行，因此不标已验收。
+- 桌面启动前停在确定的保护缺口：`getSystemCodexHomePath()` 固定指向日常 `~/.codex`；资源 sync 可创建可写 junction，`writeSystemDefaultAuth` 还可能回写刷新认证。独立 Orca profile 不足以封住这两个来源。候选 profile 未物化，候选桌面 / Run / Task / Worker 均未启动；送达、工作区、改动、提交、测试、worker_done 与短停止场景均未执行。没有 Windows 运行通过、Docker/VM 隔离通过或正式实验结果。
+- 执行偏差保留：环境执行者误调一次不带 `--check-only` 的 native ensure，实际进入 rebuild 脚本和 Electron 安装子进程；退出码未保留，不能判成功，也不能声称零副作用。事后 dist/path.txt 仍缺失，检查范围内无新缓存产物、无 Electron/pnpm 残留；不能排除曾发网络请求。未重跑修复入口。
+- 本续批只新建一个 terra/medium 环境会话。日常 Orca 的环境 Task `task_e319aa0c67cb` / Dispatch `ctx_8db2ad76f77f` 在 `dispatch_input` 的 `agent_prompt_stalled` 失败保留；源码/环境工作通过普通 status 回执，不冒充候选原生 worker_done。A/B 未唤醒，无恢复重置。必要环境会话已显式 retain。
+- 残留：批准的解压运行时、候选 addon、实验用量记录和保留的环境终端仍在。环境会话插件启动曾出现 Open Design 后台服务；其最终存活状态未核验，不将其计为候选资源，也不宣称全部背景进程已清理。未停止日常 Orca。
+- 18 项静态诊断仍未通过：12 curly、3 consistent-type-definitions、1 no-useless-escape、2 no-new-array。此次未识别出行为/安全缺陷；原 A 定向机械修复另行处理，两条稀疏数组负例须保留语义。不扩展本轮源码范围。
+
+最小待决定动作已具体化：仅给 `getSystemCodexHomePath()` 增加候选进程显式实验来源覆盖，缺省行为不变，使资源同步和认证回写共同落在实验目录；认证仅使用已有授权的独立副本或实验登录。该窄源码变更超出本轮不扩源码的范围，尚未实施；不请求整套开发重新授权。完成该边界后仍须核验匹配 CLI、启动配置、认证与任务预算，才执行一次独立任务和短停止。
+
+### 本续批用量快照（与 18:39 批次分开）
+
+总控起点为 20:10:57 本次用户消息前最后一条客户端 token_count；环境执行者是本续批新 session，从零计。下表均为区段增量，缓存输入包含在输入内，推理输出包含在输出内；不是账单。无计数恢复重置，无候选冒烟模型 session。原始计数只保存在实验 `native-run/root-usage-start.json` 与 `native-run/usage-end.json`，不公开完整会话或认证。收口文档与最终回复发生在快照之后，不计入表内。
+
+| 执行者 / 实际模型 | 输入 | 缓存输入 | 输出 | 推理输出 | total | 截止北京时间 |
+|---|---:|---:|---:|---:|---:|---|
+| 总控 / gpt-6-astra high | 4,620,826 | 4,477,056 | 13,276 | 4,945 | 4,634,102 | 20:22:07 |
+| 唯一环境执行者 / gpt-5.6-terra medium | 3,200,068 | 3,056,128 | 18,661 | 4,843 | 3,218,729 | 20:21:44 |
+
+以下保留之前的批准、实现和失败历史；其中“本批”与用量表属于各自时间段，不与本续批混算。
+
+20:10 续批授权：批准缓存 Electron 43.1.0 仅解压实验运行时目录、同版本 registry 原生产物仅复制到实核后的候选专属依赖目录。安装前核对 realpath/来源，Electron check-only 核查 registry/PTY；启动前审核 CLI、系统/托管 Codex home、hooks 和会话写入范围。一个 terra/medium 环境执行者，根只审异常/最终证据，B 待命。真实任务限定一次独立完成和一次短停止，不新增收费、不执行 12 次正式实验、不扩服务层。此前“待批准安装”记载保留为历史，已被本次准确授权取代。
+
 前批登记为“受管派发服务层修复候选”，不是完整 v0.1：R1 尚不支持依赖任务；R2 只保证已验证原协调者恢复；R5 仅为 Run 资源约束，不是账户费用控制。保留 f3a35212fb71f065697ce8edf4ac1f1f552038a6 与原 A/B 责任轨。
 
 本批顺序：先堵住批准正文丢失，再用匹配 Fork CLI/候选运行时验证一个无依赖小任务的送达、工作区、真实提交、测试、完成、停止。真实独立任务通过后才开展最小可信成果验收和依赖代码落地及两轨整合；12 次正式对照不启动。
