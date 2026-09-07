@@ -550,6 +550,8 @@ export function formatFlagHelp(flag: string): string {
     help: '--help                 Show this help message',
     'include-visual-layouts':
       '--include-visual-layouts Include tab and pane topology in JSON output',
+    'kernel-config': '--kernel-config <file>  JSON file containing Kernel repoId and plan',
+    'kernel-off': '--kernel-off              Disable persisted Kernel configuration for this Run',
     interrupt: '--interrupt            Send as an interrupt-style input when supported',
     id: '--id <id>             Identifier for a target item or permission',
     issue: '--issue <number|null>  Linked GitHub issue number',
