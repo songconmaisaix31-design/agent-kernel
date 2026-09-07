@@ -213,6 +213,10 @@ describe('Kernel Run persistence', () => {
     configureKernelRun(db, migrated, { repoId: 'repo', plan })
     db.close()
     db = new OrchestrationDb(file)
-    expect(readKernelRunConfig(db.getRun(original.id)!)).toEqual({ repoId: 'repo', plan })
+    expect(readKernelRunConfig(db.getRun(original.id)!)).toMatchObject({
+      repoId: 'repo',
+      plan,
+      owner: { terminalHandle: 'term_old', paneKey: 'pane_old' }
+    })
   })
 })

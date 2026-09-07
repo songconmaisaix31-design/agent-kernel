@@ -259,6 +259,108 @@ describe('Kernel service admission', () => {
     expectNoEffects()
   })
 
+  it('restores the original verified owner after switching Runs and preserves native fencing', async () => {
+    await configure()
+    const originalGeneration = db.getRun(runId)!.consumer_generation
+    await call('orchestration.runCreate', { objective: 'Other work', from: 'term_coord' })
+    expect(db.getRun(runId)?.coordinator_handle).toBeNull()
+    expect(db.getRun(runId)!.consumer_generation).toBeGreaterThan(originalGeneration)
+    const switchedGeneration = db.getRun(runId)!.consumer_generation
+    await call('orchestration.runUse', { id: runId, from: 'term_coord' })
+    expect(db.getCurrentRunForPane(pane)?.id).toBe(runId)
+    expect(db.getRun(runId)!.consumer_generation).toBeGreaterThan(switchedGeneration)
+    expect(await start()).toMatchObject({ state: 'ready' })
+  })
+
+  it('rechecks generation inside the original binding transaction', async () => {
+    await configure()
+    await call('orchestration.runCreate', { objective: 'Other work', from: 'term_coord' })
+    const original = db.bindRun.bind(db)
+    vi.spyOn(db, 'bindRun').mockImplementation((input) => {
+      db.db
+        .prepare('UPDATE runs SET consumer_generation = consumer_generation + 1 WHERE id = ?')
+        .run(runId)
+      return original(input)
+    })
+    await expect(
+      call('orchestration.runUse', { id: runId, from: 'term_coord' })
+    ).rejects.toMatchObject({ code: 'consumer_fenced' })
+    expect(db.bindRun).toHaveBeenCalledOnce()
+    expect(db.getRun(runId)?.coordinator_handle).toBeNull()
+    expectNoEffects()
+  })
+
+  it.each(['unique', 'multiple', 'none', 'damaged', 'different-current-owner'])(
+    'restores old config only with unique proven ownership: %s',
+    async (mode) => {
+      await configure()
+      const config = JSON.parse(db.getRun(runId)!.kernel_config!)
+      delete config.owner
+      if (mode === 'damaged') {
+        config.owner = { terminalHandle: 'term_coord' }
+      }
+      db.db
+        .prepare('UPDATE runs SET kernel_config = ? WHERE id = ?')
+        .run(JSON.stringify(config), runId)
+      await call('orchestration.runCreate', { objective: 'Other work', from: 'term_coord' })
+      if (mode === 'multiple') {
+        db.rememberRunCoordinatorHandle(runId, 'term_worker')
+      }
+      if (mode === 'none') {
+        db.db.prepare('DELETE FROM run_coordinator_handles WHERE run_id = ?').run(runId)
+      }
+      if (mode === 'different-current-owner') {
+        db.db
+          .prepare('UPDATE runs SET coordinator_handle = ?, coordinator_pane_key = ? WHERE id = ?')
+          .run('term_worker', workerPane, runId)
+      }
+      if (mode === 'unique') {
+        await call('orchestration.runUse', { id: runId, from: 'term_coord' })
+        expect(JSON.parse(db.getRun(runId)!.kernel_config!).owner).toEqual({
+          terminalHandle: 'term_coord',
+          paneKey: pane
+        })
+      } else {
+        await expect(
+          call('orchestration.runUse', { id: runId, from: 'term_coord' })
+        ).rejects.toThrow()
+        expectNoEffects()
+      }
+    }
+  )
+
+  it('rejects a Worker restoring an unbound managed Run with its own valid proof', async () => {
+    await configure()
+    await call('orchestration.runCreate', { objective: 'Other work', from: 'term_coord' })
+    await expect(
+      call(
+        'orchestration.runUse',
+        { id: runId, from: 'term_worker' },
+        {
+          runtime,
+          orchestrationCompatibilityEvidence: {
+            terminalHandle: 'term_worker',
+            paneKey: workerPane,
+            launchToken: 'worker-proof'
+          }
+        }
+      )
+    ).rejects.toMatchObject({ code: 'consumer_fenced' })
+    expect(db.getRun(runId)?.coordinator_handle).toBeNull()
+    expectNoEffects()
+  })
+
+  it('does not accept owner identity from configuration input', async () => {
+    await expect(
+      configure({
+        repoId: 'repo',
+        plan,
+        owner: { terminalHandle: 'term_worker', paneKey: workerPane }
+      })
+    ).rejects.toThrow()
+    expect(db.getRun(runId)?.kernel_config).toBeNull()
+  })
+
   it('prevents a Worker from taking over a managed Run by omitting kernel', async () => {
     await configure()
     await expect(

@@ -2,8 +2,10 @@ import type { OrchestrationDb } from './db'
 import { validatePlan, type Plan } from './kernel-plan'
 import { OrchestrationError } from './orchestration-error'
 import type { RunRow } from './types'
+import { isEquivalentPaneKey } from './db/pane-key-match'
 
-export type KernelRunConfig = { repoId: string; plan: Plan }
+export type KernelOwner = { terminalHandle: string; paneKey: string }
+export type KernelRunConfig = { repoId: string; plan: Plan; owner?: KernelOwner }
 
 export function parseKernelRunConfig(input: unknown): KernelRunConfig {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -11,7 +13,7 @@ export function parseKernelRunConfig(input: unknown): KernelRunConfig {
   }
   const value = input as Record<string, unknown>
   if (
-    Object.keys(value).some((key) => key !== 'repoId' && key !== 'plan') ||
+    Object.keys(value).some((key) => !['repoId', 'plan', 'owner'].includes(key)) ||
     typeof value.repoId !== 'string' ||
     !value.repoId.trim() ||
     value.repoId !== value.repoId.trim()
@@ -29,7 +31,67 @@ export function parseKernelRunConfig(input: unknown): KernelRunConfig {
       checked.errors
     )
   }
-  return { repoId: value.repoId, plan: checked.plan }
+  let owner: KernelOwner | undefined
+  if ('owner' in value) {
+    const candidate = value.owner as Record<string, unknown> | null
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      Array.isArray(candidate) ||
+      Object.keys(candidate).length !== 2 ||
+      !['terminalHandle', 'paneKey'].every(
+        (key) =>
+          typeof candidate[key] === 'string' &&
+          (candidate[key] as string).trim().length > 0 &&
+          candidate[key] === (candidate[key] as string).trim()
+      )
+    ) {
+      throw new OrchestrationError('kernel_config_invalid', 'Stored Kernel owner is invalid.')
+    }
+    owner = {
+      terminalHandle: candidate.terminalHandle as string,
+      paneKey: candidate.paneKey as string
+    }
+  }
+  return { repoId: value.repoId, plan: checked.plan, ...(owner ? { owner } : {}) }
+}
+
+export function assertKernelRunOwner(db: OrchestrationDb, run: RunRow, caller: KernelOwner): void {
+  const config = readKernelRunConfig(run)
+  const sameOwner = (owner: KernelOwner) =>
+    owner.terminalHandle === caller.terminalHandle &&
+    isEquivalentPaneKey(owner.paneKey, caller.paneKey)
+  const currentOwner =
+    run.coordinator_handle && run.coordinator_pane_key
+      ? { terminalHandle: run.coordinator_handle, paneKey: run.coordinator_pane_key }
+      : null
+  if (
+    run.legacy ||
+    (currentOwner && !sameOwner(currentOwner)) ||
+    ((!run.coordinator_handle || !run.coordinator_pane_key) &&
+      (run.coordinator_handle !== null || run.coordinator_pane_key !== null))
+  ) {
+    throw new OrchestrationError('consumer_fenced', 'Run has a different or invalid current owner.')
+  }
+  if (config?.owner) {
+    if (sameOwner(config.owner)) {
+      return
+    }
+  } else if (currentOwner) {
+    return
+  } else {
+    // Narrow legacy compatibility: a single native coordinator history entry, not any prior caller.
+    const history = db.db
+      .prepare('SELECT terminal_handle FROM run_coordinator_handles WHERE run_id = ?')
+      .all(run.id) as { terminal_handle: string }[]
+    if (history.length === 1 && history[0].terminal_handle === caller.terminalHandle) {
+      return
+    }
+  }
+  throw new OrchestrationError(
+    'consumer_fenced',
+    'Only the proven original Kernel owner may restore this Run.'
+  )
 }
 
 export function readKernelRunConfig(run: RunRow): KernelRunConfig | null {
@@ -138,6 +200,9 @@ export function configureKernelRun(
   expectedRun: RunRow,
   input: unknown
 ): RunRow {
+  if (input && typeof input === 'object' && 'owner' in input) {
+    throw new OrchestrationError('kernel_config_invalid', 'Kernel owner is assigned by the server.')
+  }
   const config = input === null ? null : parseKernelRunConfig(input)
   db.db.exec('BEGIN IMMEDIATE')
   try {
@@ -174,8 +239,16 @@ export function configureKernelRun(
         'Stop or release existing Run resources before changing Kernel configuration.'
       )
     }
+    const owner = {
+      terminalHandle: run.coordinator_handle as string,
+      paneKey: run.coordinator_pane_key as string
+    }
+    if (run.kernel_config != null) {
+      assertKernelRunOwner(db, run, owner)
+    }
     if (config) {
       assertKernelTaskBindings(db, run.id, config)
+      config.owner = readKernelRunConfig(run)?.owner ?? owner
     }
     db.db
       .prepare("UPDATE runs SET kernel_config = ?, updated_at = datetime('now') WHERE id = ?")
