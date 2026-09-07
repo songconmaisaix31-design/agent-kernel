@@ -62,6 +62,7 @@ describe.skipIf(process.platform !== 'win32')('run-windows-managed-smoke', () =>
     expect(childEnv.hasCodexSessionId).toBe(false)
     expect(childEnv.hasElectronRunAsNode).toBe(false)
     expect(childEnv.hasElectronOverrideDistPath).toBe(false)
-    expect(childEnv.hasOrcaDevRepoRoot).toBe(false)
+    expect(childEnv.hasOrcaDevRepoRoot).toBe(true)
+    expect(childEnv.hasCandidateCliCommand).toBe(true)
   })
 })

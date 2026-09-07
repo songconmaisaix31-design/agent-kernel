@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { lstatSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { prepareDevCliTerminalWrappers } from './dev-cli-terminal-wrapper.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '..', '..')
 const labRoot = resolve(
@@ -22,7 +23,13 @@ assertExperimentPath(profile)
 assertExperimentTree(systemHome)
 assertExperimentTree(profile)
 
-const childEnv = createChildEnvironment()
+const electronPath = join(labRoot, 'runtime', 'electron-43.1.0-win32-x64', 'electron.exe')
+const wrappers = prepareDevCliTerminalWrappers({
+  repoRoot,
+  userDataPath: profile,
+  electronExecutable: electronPath
+})
+const childEnv = createChildEnvironment(wrappers.userDataBinDir)
 
 if (process.argv.includes('--print-config')) {
   process.stdout.write(`${JSON.stringify({ systemHome, profile })}\n`)
@@ -41,7 +48,8 @@ if (process.argv.includes('--print-child-env')) {
         hasCodexSessionId: Boolean(process.env.CODEX_SESSION_ID),
         hasElectronRunAsNode: Boolean(process.env.ELECTRON_RUN_AS_NODE),
         hasElectronOverrideDistPath: Boolean(process.env.ELECTRON_OVERRIDE_DIST_PATH),
-        hasOrcaDevRepoRoot: Boolean(process.env.ORCA_DEV_REPO_ROOT)
+        hasOrcaDevRepoRoot: Boolean(process.env.ORCA_DEV_REPO_ROOT),
+        hasCandidateCliCommand: process.env.ORCA_CLI_COMMAND?.endsWith('orca-dev.cmd') ?? false
       }))`
     ],
     { encoding: 'utf8', env: childEnv }
@@ -52,7 +60,6 @@ if (process.argv.includes('--print-child-env')) {
 
 mkdirSync(systemHome, { recursive: true })
 mkdirSync(profile, { recursive: true })
-const electronPath = join(labRoot, 'runtime', 'electron-43.1.0-win32-x64', 'electron.exe')
 const result = spawnSync(electronPath, ['.'], {
   cwd: repoRoot,
   env: {
@@ -62,7 +69,7 @@ const result = spawnSync(electronPath, ['.'], {
 })
 process.exit(result.status ?? 1)
 
-function createChildEnvironment() {
+function createChildEnvironment(userDataBinDir) {
   const env = { ...process.env }
   for (const key of Object.keys(env)) {
     if (
@@ -74,7 +81,10 @@ function createChildEnvironment() {
   return {
     ...env,
     ORCA_EXPERIMENT_CODEX_SYSTEM_HOME: systemHome,
-    ORCA_USER_DATA_PATH: profile
+    ORCA_USER_DATA_PATH: profile,
+    ORCA_DEV_REPO_ROOT: repoRoot,
+    ORCA_CLI_COMMAND: join(userDataBinDir, 'orca-dev.cmd'),
+    Path: `${userDataBinDir}${process.platform === 'win32' ? ';' : ':'}${env.Path ?? env.PATH ?? ''}`
   }
 }
 
