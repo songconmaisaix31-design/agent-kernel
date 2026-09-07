@@ -2,7 +2,9 @@ import {
   cpSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   readlinkSync,
   rmdirSync,
   rmSync,
@@ -11,7 +13,7 @@ import {
   unlinkSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
   clearCopiedResourceMarker,
   markCopiedResource,
@@ -20,6 +22,7 @@ import {
 import { observe, observeResolvedPathEntry } from './codex-path-observation'
 
 const CODEX_GLOBAL_INSTRUCTIONS_ENTRY = 'AGENTS.md'
+export const ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV = 'ORCA_EXPERIMENT_CODEX_SYSTEM_HOME'
 
 const CODEX_SYSTEM_RESOURCE_ENTRIES = [
   'skills',
@@ -33,7 +36,15 @@ const CODEX_SYSTEM_RESOURCE_ENTRIES = [
 ] as const
 
 export function getSystemCodexHomePath(): string {
+  const experimentHome = resolveExperimentCodexHomePaths()
+  if (experimentHome) {
+    return experimentHome.systemHomePath
+  }
   return join(homedir(), '.codex')
+}
+
+export function isExperimentCodexSystemHomeEnabled(): boolean {
+  return process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV] !== undefined
 }
 
 /** Path only; use when a read-only caller must not materialize the mirror. */
@@ -52,6 +63,12 @@ export function getCodexSessionBackfillStateDirPath(): string {
 }
 
 export function getOrcaUserDataPath(): string {
+  const userDataPath = getUnvalidatedOrcaUserDataPath()
+  resolveExperimentCodexHomePaths(userDataPath)
+  return userDataPath
+}
+
+function getUnvalidatedOrcaUserDataPath(): string {
   if (process.env.ORCA_USER_DATA_PATH) {
     return process.env.ORCA_USER_DATA_PATH
   }
@@ -73,9 +90,110 @@ export function getOrcaUserDataPath(): string {
 export function syncSystemCodexResourcesIntoManagedHome(managedHomePath?: string): void {
   const targetHome = managedHomePath ?? getOrcaManagedCodexHomePath()
   const systemHomePath = getSystemCodexHomePath()
+  assertExperimentCodexHomeTree(systemHomePath)
+  assertExperimentCodexHomeTree(targetHome)
   for (const entryName of CODEX_SYSTEM_RESOURCE_ENTRIES) {
     linkSystemCodexResource(systemHomePath, targetHome, entryName)
   }
+}
+
+function resolveExperimentCodexHomePaths(
+  unvalidatedUserDataPath = getUnvalidatedOrcaUserDataPath()
+): {
+  systemHomePath: string
+  managedHomePath: string
+} | null {
+  const rawSystemHome = process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV]
+  if (rawSystemHome === undefined) {
+    return null
+  }
+  const systemHome = rawSystemHome.trim()
+  if (!systemHome || !isAbsolute(systemHome) || !isAbsolute(unvalidatedUserDataPath)) {
+    throw new Error('Experimental Codex homes must be non-empty absolute paths.')
+  }
+  if (process.platform !== 'win32') {
+    throw new Error('Experimental Codex system home is supported only on Windows.')
+  }
+  const experimentRoot = resolve(
+    process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
+    'OrcaKernelLab'
+  )
+  const systemHomePath = resolve(systemHome)
+  const userDataPath = resolve(unvalidatedUserDataPath)
+  const managedHomePath = join(userDataPath, 'codex-runtime-home', 'home')
+  for (const candidate of [systemHomePath, userDataPath, managedHomePath]) {
+    assertExperimentPath(candidate, experimentRoot)
+  }
+  return { systemHomePath, managedHomePath }
+}
+
+function assertExperimentCodexHomeTree(homePath: string): void {
+  const experiment = resolveExperimentCodexHomePaths()
+  if (!experiment) {
+    return
+  }
+  const experimentRoot = resolve(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+  assertExperimentPath(homePath, experimentRoot)
+  if (isAbsentPath(homePath)) {
+    return
+  }
+  const pending = [homePath]
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    const stats = lstatSync(current)
+    if (stats.isSymbolicLink()) {
+      assertExperimentPath(realpathSync(current), experimentRoot)
+      continue
+    }
+    if (stats.isDirectory()) {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        pending.push(join(current, entry.name))
+      }
+    }
+  }
+}
+
+function assertExperimentPath(candidatePath: string, experimentRoot: string): void {
+  const relativePath = relative(experimentRoot, candidatePath)
+  if (relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))) {
+    let existingPath = candidatePath
+    while (isAbsentPath(existingPath)) {
+      const parent = resolve(existingPath, '..')
+      if (parent === existingPath) {
+        break
+      }
+      existingPath = parent
+    }
+    if (isPathInside(experimentRoot, realpathSync(existingPath))) {
+      return
+    }
+  }
+  throw new Error(`Experimental Codex path escapes OrcaKernelLab: ${candidatePath}`)
+}
+
+function isAbsentPath(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return true
+    }
+    throw error
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+  )
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate)
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
 }
 
 export function syncCodexGlobalInstructionsIntoManagedHome({
