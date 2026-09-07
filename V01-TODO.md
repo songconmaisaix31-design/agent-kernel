@@ -1,5 +1,25 @@
 # 当前窄批次：批准正文与真实独立 Worker 冒烟（2026-09-07）
 
+## 2026-09-08 持续开发：独立源码与真实冒烟分开推进
+
+以用户《主控持续开发指令与最小审计契约》为当前授权；旧批“只做环境、不唤醒 A/B、真实冒烟前禁止全部接纳源码”的阶段限制只保留为历史。真实运行门槛不降低，依赖派发仍拒绝，12 次正式比较不启动。开发 Run 沿用 generation 2；terra 只处理原候选状态命令，审批由用户处理，不通过其他执行者绕过。
+
+| 轨道 / owner | 唯一写入范围 | 本批输入、输出及验收 |
+|---|---|---|
+| A / 原 rules 标准模型会话 | `src/main/runtime/orchestration/kernel-plan.ts`、`kernel-plan.test.ts` | 实查原分支基线；仅消除既有静态诊断，保留稀疏数组负例和行为；原测试发现/执行一致、Node 类型与两文件静态通过，commit/push |
+| B / 原 integration 强模型会话 | `src/main/runtime/orchestration/kernel-candidate-review.ts`、`kernel-candidate-review.test.ts`、必要相邻同前缀测试；`docs/ORCA-INTEGRATION.md` 新增本批小节 | 从受信计划与固定 Git 提交检查独立任务候选的实际差异范围，真实临时 Git 正/负例；只读且不执行候选代码，不持久化 accepted、不放开依赖，不改 CLI/RPC/DB/Plan/环境；新接口唯一 owner 为 B |
+| 主控 | 本看板与关键决策/验收 | 固定实际 Task/Dispatch、模型、提交、范围与用量；原标准角色停在交互提示，本批由已完成源码的同一 B 串行机械集成，领域返修回 owner |
+
+源码并行仅在任务权限/模型核验后成立；审批或派发失败保持原状态，不以普通 status 冒充 worker_done。候选 review 仅为 M2 前置检查，受信验收执行、正式接纳和依赖落地仍未实现。证据不足时拒绝；不建设新审计或证明平台。
+
+本批实际派发：A `task_c56189ed0cef` / `ctx_1f6ed85638ba` 在 agent_readiness 被 `codex-interactive-prompt` 拒绝并 retain，未实施；B `task_efddfd27a39f` / `ctx_03aa91744c33` 已 input_accepted，复用原会话，00:40:44 的 turn_context 核实 `gpt-6-astra/high`。未新建模型会话。日常 CLI 在无终端环境变量且同时传 Worker `--terminal` 时会将接收者当作隐式发送者；首条调用在创建 Dispatch 前 consumer_fenced，核对原生当前终端后显式指定本主控 `--from` 正常派发，未重绑 Run或复制凭据。
+
+B 实测主模块 336 行超过原 300 行上限后，经主控定向批准增加同 owner 的 `kernel-candidate-review-paths.ts`，只拆出 Git NUL 树/差异与路径模式检查，不扩功能或关闭规则。
+
+B 源码验收：`706cf15ffc9d4328167ffbdb4c03aa72be620ac2`，说明 tip `f38d56fb5c15650e05671835082dea3b278590c8`，远端同 SHA；3 份 TS 与原说明追加共 4 文件。主控已逐文件审查固定 Git 对象与真实测试负例：63/63、Node 类型/收录、原规则 lint/format 通过；首轮 fixture 与未用导入失败保留在仓外 `evidence/continuation-20260908-003901/B`。仅接纳为 M2 源码前置，尚无 CLI/RPC 接线、受信验收执行或 accepted 状态。当前 Git 2.47 实跑，不冒充 Git 2.25 实跑。B 已 worker_done 并 retain，下一步使用新 Task/Dispatch 在原 B 工作树串行合入当前开发基线、运行组合回归后普通 push；主控只作 Git 快进接纳。A 静态返修和 terra 真实冒烟仍待原交互恢复，没有替代执行。
+
+- 2026-09-08 00:06 主控交接：旧主控最后一轮 task_complete、无未返回工具调用；按用户授权由当前会话 `01a07c86-4399-7411-9c22-56420ebf0596` 经日常 Orca 原生 run-use 接管原开发 Run `run_17a07a644aaa`，协调终端 `term_a7546a3e-cf67-4a0c-9f20-3ea0e571da8a`，consumer_generation 1→2，run-current/run-show 一致；新绑定 Delivery 查询 count=0、deliveryId=null，无需 ACK。旧会话及 A/B/terra 保留，历史任务状态不改；terra 启动命令已返回 PID 120304，当前仍待下一条候选状态检查的人工审批，未重复启动、未派发，候选路由及真实 Worker 仍待验收。
+
 ## 22:08 续批：候选 CLI 接线与原生协调会话
 
 用户局部批准修复冒烟启动器遗漏的开发 CLI 准备与调用接线，复用原生 Agent 创建和凭据传递；不扩大服务层功能。当前同一标准执行者负责实现、针对回归和实验操作，总控审关键差异与结果，A/B 保留且不唤醒。保留旧空 Run/Task 和停止的普通 shell；它没有原生 Agent 身份，不能凭句柄配置 Kernel。若正常恢复不适用，仅允许一次替代测试 Run。真实任务继续使用原一次性仓库及外置验收，协调会话与 Worker 用量均计入；完成与独立停止分别验收。
