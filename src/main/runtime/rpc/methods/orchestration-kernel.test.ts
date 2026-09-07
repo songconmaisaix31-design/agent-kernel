@@ -12,40 +12,36 @@ import { OrchestrationDb } from '../../orchestration/db'
 import type { Plan } from '../../orchestration/kernel-plan'
 import type { RpcContext } from '../core'
 import { ORCHESTRATION_METHODS } from './orchestration'
-
 type CliRunUseInput = {
   flags: Map<string, string | boolean>
-  client: {
-    call: (name: string, input: Record<string, unknown>) => Promise<{ result: unknown }>
-  }
+  client: { call: (name: string, input: Record<string, unknown>) => Promise<{ result: unknown }> }
   cwd: string
   json: boolean
 }
-
 type CliRunUseHandler = (input: CliRunUseInput) => Promise<void>
-
-type CliOrchestrationModule = {
-  ORCHESTRATION_HANDLERS: Record<string, CliRunUseHandler>
-}
-
 // Real registered handlers and SQLite; only terminal, resource and caller-environment observations are replaced.
 describe('Kernel service admission', () => {
   const pane = 'tab_coord:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const workerPane = 'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   const proof = { terminalHandle: 'term_coord', paneKey: pane, launchToken: 'kernel-test-proof' }
+  const workerStartInput = {
+    from: 'term_coord',
+    worktree: 'new-top-level',
+    name: 'worker',
+    agent: 'codex'
+  }
   let db: OrchestrationDb
   let runtime: OrcaRuntimeService
   let ctx: RpcContext
-  let runId: string
-  let taskId: string
+  let runId: string, taskId: string
   let plan: Plan
   let runUseHandler: CliRunUseHandler
-
   beforeEach(async () => {
-    const cli = await vi.importActual<CliOrchestrationModule>(
-      '../../../../cli/handlers/orchestration'
-    )
-    runUseHandler = cli.ORCHESTRATION_HANDLERS['orchestration run-use']
+    runUseHandler = (
+      await vi.importActual<{ ORCHESTRATION_HANDLERS: Record<string, CliRunUseHandler> }>(
+        '../../../../cli/handlers/orchestration'
+      )
+    ).ORCHESTRATION_HANDLERS['orchestration run-use']
     db = new OrchestrationDb(':memory:')
     runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
@@ -142,12 +138,10 @@ describe('Kernel service admission', () => {
       new Error('Unexpected remote call')
     )
   })
-
   afterEach(() => {
     db.close()
     vi.restoreAllMocks()
   })
-
   async function call(
     name: string,
     input: Record<string, unknown>,
@@ -156,7 +150,6 @@ describe('Kernel service admission', () => {
     const method = ORCHESTRATION_METHODS.find((candidate) => candidate.name === name)!
     return method.handler(method.params!.parse(input), context)
   }
-
   function configure(kernel: unknown = { repoId: 'repo', plan }, context = ctx) {
     return call('orchestration.runUse', { id: runId, from: 'term_coord', kernel }, context)
   }
@@ -164,18 +157,10 @@ describe('Kernel service admission', () => {
   function start(overrides: Record<string, unknown> = {}, context = ctx) {
     return call(
       'orchestration.workerStart',
-      {
-        task: taskId,
-        from: 'term_coord',
-        worktree: 'new-top-level',
-        name: 'worker',
-        agent: 'codex',
-        ...overrides
-      },
+      { task: taskId, ...workerStartInput, ...overrides },
       context
     )
   }
-
   function expectNoEffects() {
     expect(runtime.createManagedWorktree).not.toHaveBeenCalled()
     expect(runtime.createTerminal).not.toHaveBeenCalled()
@@ -196,13 +181,11 @@ describe('Kernel service admission', () => {
       }
       const flags = new Map<string, string | boolean>([
         ['id', runId],
-        ['from', 'term_coord'],
-        ...(options.off
-          ? [['kernel-off', true] as [string, string | boolean]]
-          : options.omitKernel
-            ? []
-            : [['kernel-config', path] as [string, string | boolean]])
+        ['from', 'term_coord']
       ])
+      if (!options.omitKernel) {
+        flags.set(options.off ? 'kernel-off' : 'kernel-config', options.off || path)
+      }
       await runUseHandler({
         flags,
         client: {
@@ -220,7 +203,6 @@ describe('Kernel service admission', () => {
 
   it('configures through the CLI and confirms server-owned defaults in SQLite', async () => {
     await runUseFromCli({ repoId: 'repo', plan, limits: { maxAttempts: 4 } })
-
     expect(JSON.parse(db.getRun(runId)!.kernel_config!)).toMatchObject({
       repoId: 'repo',
       plan,
@@ -233,7 +215,6 @@ describe('Kernel service admission', () => {
   it('keeps the prior CLI configuration after an invalid plan without resource effects', async () => {
     await runUseFromCli({ repoId: 'repo', plan })
     const original = db.getRun(runId)!.kernel_config
-
     await expect(
       runUseFromCli({ repoId: 'repo', plan: { ...plan, schemaVersion: 2 } })
     ).rejects.toMatchObject({ code: 'kernel_plan_invalid' })
@@ -244,7 +225,6 @@ describe('Kernel service admission', () => {
   it('disables through the CLI and restores native worker startup', async () => {
     await runUseFromCli({ repoId: 'repo', plan })
     await runUseFromCli(undefined, { off: true })
-
     expect(db.getRun(runId)?.kernel_config).toBeNull()
     expect(await start({ worktree: 'current', name: undefined }, { runtime })).toMatchObject({
       state: 'ready'
@@ -254,9 +234,7 @@ describe('Kernel service admission', () => {
   it('keeps persisted configuration unchanged when CLI Kernel flags are omitted', async () => {
     await runUseFromCli({ repoId: 'repo', plan })
     const original = db.getRun(runId)!.kernel_config
-
     await runUseFromCli(undefined, { omitKernel: true })
-
     expect(db.getRun(runId)?.kernel_config).toBe(original)
     expectNoEffects()
   })
