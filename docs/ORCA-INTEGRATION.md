@@ -303,3 +303,16 @@ if ($LASTEXITCODE -ne 0) { throw 'Main build failed' }
 验证环境：Windows，Git `2.47.0.windows.1`、Node `24.16.0`、pnpm `10.24.0`；单文件 Vitest 实际发现并通过 63 项，`pnpm run typecheck:node`、Node `tsc --listFilesOnly` 收录三份新 TS、改动代码 oxlint/oxfmt、diff check 均通过。日志位于仓外 `C:/Users/DW/AppData/Local/OrcaKernelLab/evidence/continuation-20260908-003901/B`；Node 测试设置进程级 `ELECTRON_OVERRIDE_DIST_PATH`，没有安装依赖或启动 Electron。首轮 7 项 fixture 失败源于 Windows `update-index` 丢弃特殊名称，改用真实 `mktree` 并先断言树内名称后通过，未削弱负例。
 
 命令遵守 [Git 2.25 基线](reference/git-compatibility.md)，选项依据 [2.25 diff-tree 文档](https://git-scm.com/docs/git-diff-tree/2.25.0)；本机未另装或实跑 Git 2.25。范围是两棵固定提交树的净差异，Git rename/copy 检测不是内容来源证明；不审计中间已回退的提交、不锁定仓库元数据、不证明工作目录 junction/hardlink 沙箱或仓库文件的抗并发篡改能力。范围结果尚未接入接纳流程，后续调用者仍须验证批准来源及实际宿主，并另行完成受信验收与集成。
+
+## 本批监督契约（2026-09-08，主控）
+
+| 规则 | owner | 执行点 | 失败处理 | 验证证据 | 状态 |
+|---|---|---|---|---|---|
+| Task 明确基线与唯一写入路径；共享接口由 B 单一维护 | 主控派发，A/B 执行 | 原生 Task.spec 与提交差异审查 | 越界退回原 owner；不冒充文件系统沙箱 | 看板所列三 Task；候选 `479322a` 相对 `e39c3c7` 仅四文件 | 提示约定 |
+| 开发 Run 只由当前合法主控消费，候选使用另一实例的原生身份 | 主控 / 环境 terra | 日常 run-current、generation 与当前 Delivery | consumer_fenced 停止消费，核实绑定；不复制身份或改库 | 开发 `run_17a07a644aaa` / generation 2；候选身份仍待测 | 程序已执行 |
+| 真实工具审批保留；续接先确认旧执行者不再写入 | 主控 / 原执行者 / 用户 | 原生 readiness 与原终端审批 | 只暂停依赖操作，不代按、不换 Agent 绕过；其他任务独立推进 | A readiness 拒绝；terra 等人工恢复；B 两批完成后 retain | 程序已执行 |
+| 源码候选经测试和固定提交审查后普通集成 | B 源码与串行集成，主控验收 | 原生 worker_done、当前 Delivery ACK、Git 快进 | 失败回原 owner，保存首轮失败，不放宽断言 | `479322a` 的 13 文件发现/执行 456/456、Node 类型及 main 构建；本地报告索引在看板 | 运行已验证 |
+| 实际模型与用量以会话记录为准；未通过功能不启动 12 次比较 | 主控监督 | 当前 turn_context、计数快照与里程碑检查 | 未知单列，不编造费用或实验效果 | 本批同一 B astra/high；A/terra 增量 0；看板记录分段口径 | 程序已执行 |
+| 正式成果接纳、依赖代码落地与真实 Worker 停止/接续 | 后续原 owner | 当前无完整执行点 | 维持未通过，不将范围检查等同接受成果 | M1–M5 剩余条件见唯一看板 | 未支持 |
+
+本表只说明本批实际监督与证据，不表示不可篡改审计、强制写入隔离或跨平台运行证明。

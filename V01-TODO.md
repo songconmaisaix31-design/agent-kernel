@@ -1,4 +1,4 @@
-# 当前窄批次：批准正文与真实独立 Worker 冒烟（2026-09-07）
+# 当前批次：候选范围检查已集成，真实独立 Worker 冒烟待通过（2026-09-08）
 
 ## 2026-09-08 持续开发：独立源码与真实冒烟分开推进
 
@@ -17,6 +17,12 @@
 B 实测主模块 336 行超过原 300 行上限后，经主控定向批准增加同 owner 的 `kernel-candidate-review-paths.ts`，只拆出 Git NUL 树/差异与路径模式检查，不扩功能或关闭规则。
 
 B 源码验收：`706cf15ffc9d4328167ffbdb4c03aa72be620ac2`，说明 tip `f38d56fb5c15650e05671835082dea3b278590c8`，远端同 SHA；3 份 TS 与原说明追加共 4 文件。主控已逐文件审查固定 Git 对象与真实测试负例：63/63、Node 类型/收录、原规则 lint/format 通过；首轮 fixture 与未用导入失败保留在仓外 `evidence/continuation-20260908-003901/B`。仅接纳为 M2 源码前置，尚无 CLI/RPC 接线、受信验收执行或 accepted 状态。当前 Git 2.47 实跑，不冒充 Git 2.25 实跑。B 已 worker_done 并 retain，下一步使用新 Task/Dispatch 在原 B 工作树串行合入当前开发基线、运行组合回归后普通 push；主控只作 Git 快进接纳。A 静态返修和 terra 真实冒烟仍待原交互恢复，没有替代执行。
+
+01:03 集成验收：同一 B 的 `task_aad1128aeb45` / `ctx_5ea49c253910` 完成普通合并候选 `479322ad17f758271d4140e936c0d0001b7c549e`（双亲 `f38d56f`、主控看板基线 `e39c3c7`），主控已快进接纳。13 文件实际发现/执行 **456/456**，含 Plan 129、真实 Git 候选 63；Node 类型、新三文件静态与 main 构建通过。第一轮缺 CLI 导致漏发现 21 项且 69 项失败、缺构建输入导致类型/构建失败均保留；仅物化固定 HEAD 的 60 个缺失跟踪文件并逐个核对 blob，未改其内容。相对 `e39c3c7` 仍仅三 TS 与说明追加；A Plan 和其他领域无改动。B 两批 worker_done 已核对、各新 Delivery 已 ACK，终端 retained，无关闭或新增会话。证据：仓外 `C:/Users/DW/AppData/Local/OrcaKernelLab/evidence/continuation-20260908-003901/B-integration/report.md`。
+
+当前剩余：M1 候选终端内 CLI、合法协调身份、Kernel 持久配置及独立 Worker/短停止均未通过；原 terra 命令取消后未产生新的执行证据，按用户要求暂停，用户在原 terra 输入“读取收件箱最新要求，仅修正状态检查命令并重新提交审批。”后才接回。A 的 `codex-interactive-prompt` 仍使本批静态返修未执行，既有 18 项诊断保留。B 已完成本批独立前置并保留，未借其绕过上述审批。M2 接纳执行/生产接线、M3 依赖及两轨实际整合、M4 完整回归和 M5 比较均未完成；不以当前服务层/真实 Git 测试冒充真实 Worker。下一源码接线须基于 M1 实际身份结果；本批不扩成另一套模拟接纳链。
+
+简短用量：起点为本批操作快照（总控计数截止 00:38:33），终点总控 01:01:53、B 01:02:03；同会话无重置。总控 astra/high 增量输入 11,953,379（缓存 11,826,560）、输出 22,642（推理 8,194），total 11,976,021；B astra/high 输入 8,412,838（缓存 8,218,752）、输出 40,702（推理 11,663），total 8,453,540。A 与环境 terra/medium 记录增量均为 0；无新模型会话。缓存包含于输入、推理包含于输出，不是费用，也不包含快照之后的收尾；原计数仅在仓外同目录 `usage-start.json`、`usage-end.json`，未上传会话。
 
 - 2026-09-08 00:06 主控交接：旧主控最后一轮 task_complete、无未返回工具调用；按用户授权由当前会话 `01a07c86-4399-7411-9c22-56420ebf0596` 经日常 Orca 原生 run-use 接管原开发 Run `run_17a07a644aaa`，协调终端 `term_a7546a3e-cf67-4a0c-9f20-3ea0e571da8a`，consumer_generation 1→2，run-current/run-show 一致；新绑定 Delivery 查询 count=0、deliveryId=null，无需 ACK。旧会话及 A/B/terra 保留，历史任务状态不改；terra 启动命令已返回 PID 120304，当前仍待下一条候选状态检查的人工审批，未重复启动、未派发，候选路由及真实 Worker 仍待验收。
 
