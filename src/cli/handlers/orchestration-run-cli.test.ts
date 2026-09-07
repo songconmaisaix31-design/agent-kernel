@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs, validateCommandAndFlags } from '../args'
 import { ORCHESTRATION_COMMAND_SPECS } from '../specs/orchestration'
+import { assertKernelRunUseResponse } from './orchestration-kernel-config'
 
 const callMock = vi.fn()
 const getTerminalHandleMock = vi.hoisted(() => vi.fn())
@@ -125,7 +126,7 @@ describe('lightweight Run CLI handlers', () => {
     })
   })
 
-  it('passes a JSON Kernel config and requires the persisted response', async () => {
+  it('accepts server owner and default limits while preserving requested Kernel values', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'orca-kernel-config-'))
     const kernel = {
       repoId: 'repo_1',
@@ -150,7 +151,17 @@ describe('lightweight Run CLI handlers', () => {
     const path = join(directory, 'kernel.json')
     await writeFile(path, JSON.stringify(kernel))
     callMock.mockResolvedValue({
-      result: { run: { id: 'run_1', objective: 'Work', kernel_config: JSON.stringify(kernel) } }
+      result: {
+        run: {
+          id: 'run_1',
+          objective: 'Work',
+          kernel_config: JSON.stringify({
+            ...kernel,
+            owner: 'runtime',
+            limits: { ...kernel.limits, maxRetries: 3 }
+          })
+        }
+      }
     })
 
     await ORCHESTRATION_HANDLERS['orchestration run-use']({
@@ -169,6 +180,19 @@ describe('lightweight Run CLI handlers', () => {
       from: 'term_coord',
       kernel
     })
+  })
+
+  it.each([
+    ['repoId', { repoId: 'repo_other', plan: { version: 1 }, limits: { maxConcurrent: 2 } }],
+    ['plan', { repoId: 'repo_1', plan: { version: 2 }, limits: { maxConcurrent: 2 } }],
+    ['requested limit', { repoId: 'repo_1', plan: { version: 1 }, limits: { maxConcurrent: 3 } }]
+  ])('rejects a changed %s in persisted Kernel configuration', (_field, persisted) => {
+    expect(() =>
+      assertKernelRunUseResponse(
+        { kernel_config: JSON.stringify(persisted) },
+        { repoId: 'repo_1', plan: { version: 1 }, limits: { maxConcurrent: 2 } }
+      )
+    ).toThrow(/different persisted kernel_config/)
   })
 
   it('registers Kernel flags with the real run-use parser and command spec', () => {

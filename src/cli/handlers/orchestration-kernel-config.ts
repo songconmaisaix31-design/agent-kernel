@@ -12,6 +12,23 @@ type RunUseKernelResponse = {
   kernel_config?: unknown
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function containsRequestedValues(persisted: unknown, requested: unknown): boolean {
+  if (!isRecord(requested)) {
+    return isDeepStrictEqual(persisted, requested)
+  }
+  if (!isRecord(persisted)) {
+    return false
+  }
+  return Object.entries(requested).every(
+    ([key, value]) =>
+      Object.hasOwn(persisted, key) && containsRequestedValues(persisted[key], value)
+  )
+}
+
 function unsupportedKernelConfig(message: string): never {
   throw new RuntimeClientError('kernel_config_unsupported', message)
 }
@@ -85,7 +102,12 @@ export function assertKernelRunUseResponse(
       'The Orca runtime returned invalid persisted kernel_config. No success was reported.'
     )
   }
-  if (!isDeepStrictEqual(persisted, requested)) {
+  if (
+    !isRecord(persisted) ||
+    !isDeepStrictEqual(persisted.repoId, requested.repoId) ||
+    !isDeepStrictEqual(persisted.plan, requested.plan) ||
+    (requested.limits !== undefined && !containsRequestedValues(persisted.limits, requested.limits))
+  ) {
     unsupportedKernelConfig(
       'The Orca runtime returned a different persisted kernel_config. No success was reported.'
     )
