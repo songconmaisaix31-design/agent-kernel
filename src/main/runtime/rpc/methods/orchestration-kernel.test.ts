@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
@@ -9,6 +12,21 @@ import { OrchestrationDb } from '../../orchestration/db'
 import type { Plan } from '../../orchestration/kernel-plan'
 import type { RpcContext } from '../core'
 import { ORCHESTRATION_METHODS } from './orchestration'
+
+type CliRunUseInput = {
+  flags: Map<string, string | boolean>
+  client: {
+    call: (name: string, input: Record<string, unknown>) => Promise<{ result: unknown }>
+  }
+  cwd: string
+  json: boolean
+}
+
+type CliRunUseHandler = (input: CliRunUseInput) => Promise<void>
+
+type CliOrchestrationModule = {
+  ORCHESTRATION_HANDLERS: Record<string, CliRunUseHandler>
+}
 
 // Real registered handlers and SQLite; only terminal, resource and caller-environment observations are replaced.
 describe('Kernel service admission', () => {
@@ -21,8 +39,13 @@ describe('Kernel service admission', () => {
   let runId: string
   let taskId: string
   let plan: Plan
+  let runUseHandler: CliRunUseHandler
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const cli = await vi.importActual<CliOrchestrationModule>(
+      '../../../../cli/handlers/orchestration'
+    )
+    runUseHandler = cli.ORCHESTRATION_HANDLERS['orchestration run-use']
     db = new OrchestrationDb(':memory:')
     runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
@@ -160,6 +183,83 @@ describe('Kernel service admission', () => {
     expect(runtime.callOrchestrationWorkerServer).not.toHaveBeenCalled()
     expect(db.getDispatchContext(taskId)).toBeUndefined()
   }
+
+  async function runUseFromCli(
+    config: unknown,
+    options: { off?: boolean; omitKernel?: boolean } = {}
+  ): Promise<void> {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-kernel-cli-'))
+    const path = join(directory, 'kernel.json')
+    try {
+      if (!options.off && !options.omitKernel) {
+        await writeFile(path, JSON.stringify(config))
+      }
+      const flags = new Map<string, string | boolean>([
+        ['id', runId],
+        ['from', 'term_coord'],
+        ...(options.off
+          ? [['kernel-off', true] as [string, string | boolean]]
+          : options.omitKernel
+            ? []
+            : [['kernel-config', path] as [string, string | boolean]])
+      ])
+      await runUseHandler({
+        flags,
+        client: {
+          call: async (name: string, input: Record<string, unknown>) => ({
+            result: await call(name, input)
+          })
+        },
+        cwd: '/test/repo',
+        json: true
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+
+  it('configures through the CLI and confirms server-owned defaults in SQLite', async () => {
+    await runUseFromCli({ repoId: 'repo', plan, limits: { maxAttempts: 4 } })
+
+    expect(JSON.parse(db.getRun(runId)!.kernel_config!)).toMatchObject({
+      repoId: 'repo',
+      plan,
+      owner: { terminalHandle: 'term_coord', paneKey: pane },
+      limits: { maxAttempts: 4, maxConcurrentWorkers: 2, maxAttemptsPerTask: 2 }
+    })
+    expectNoEffects()
+  })
+
+  it('keeps the prior CLI configuration after an invalid plan without resource effects', async () => {
+    await runUseFromCli({ repoId: 'repo', plan })
+    const original = db.getRun(runId)!.kernel_config
+
+    await expect(
+      runUseFromCli({ repoId: 'repo', plan: { ...plan, schemaVersion: 2 } })
+    ).rejects.toMatchObject({ code: 'kernel_plan_invalid' })
+    expect(db.getRun(runId)?.kernel_config).toBe(original)
+    expectNoEffects()
+  })
+
+  it('disables through the CLI and restores native worker startup', async () => {
+    await runUseFromCli({ repoId: 'repo', plan })
+    await runUseFromCli(undefined, { off: true })
+
+    expect(db.getRun(runId)?.kernel_config).toBeNull()
+    expect(await start({ worktree: 'current', name: undefined }, { runtime })).toMatchObject({
+      state: 'ready'
+    })
+  })
+
+  it('keeps persisted configuration unchanged when CLI Kernel flags are omitted', async () => {
+    await runUseFromCli({ repoId: 'repo', plan })
+    const original = db.getRun(runId)!.kernel_config
+
+    await runUseFromCli(undefined, { omitKernel: true })
+
+    expect(db.getRun(runId)?.kernel_config).toBe(original)
+    expectNoEffects()
+  })
 
   it('persists an approved plan through runUse and enters the native Worker lifecycle', async () => {
     await configure()
