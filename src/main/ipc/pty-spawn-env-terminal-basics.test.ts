@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { spawnSync as spawnSyncType } from 'node:child_process'
 import { spawnMock } from './pty-ipc-mock-registry'
 import { BUNDLED_CLI_PATH, TEST_CODEX_HOME, makeDisposable } from './pty-ipc-test-constants'
 import { setupPtyIpcSuite } from './pty-ipc-test-harness'
@@ -248,8 +249,9 @@ describe('registerPtyHandlers', () => {
       const env = await withBundledCli(() =>
         spawnAndGetEnv(undefined, undefined, () => TEST_CODEX_HOME)
       )
-      const { spawnSync: spawnRealChild } =
-        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      const { spawnSync: spawnRealChild } = await vi.importActual<{
+        spawnSync: typeof spawnSyncType
+      }>('node:child_process')
       const child = spawnRealChild(
         process.execPath,
         ['-e', 'process.stdout.write(process.env.CODEX_HOME ?? "")'],

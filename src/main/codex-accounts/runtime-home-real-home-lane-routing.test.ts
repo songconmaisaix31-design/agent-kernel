@@ -157,11 +157,11 @@ describe('CodexRuntimeHomeService', () => {
         expect(readFileSync(externalAuthPath, 'utf8')).toBe('daily-auth\n')
         expect(readFileSync(externalConfigPath, 'utf8')).toBe('daily-config\n')
       } finally {
-        if (previousProfilePath === undefined) delete process.env.ORCA_USER_DATA_PATH
-        else process.env.ORCA_USER_DATA_PATH = previousProfilePath
+        if (previousProfilePath === undefined) {delete process.env.ORCA_USER_DATA_PATH}
+        else {process.env.ORCA_USER_DATA_PATH = previousProfilePath}
         if (previousExperimentHome === undefined)
-          delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
-        else process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome
+          {delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME}
+        else {process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome}
         rmSync(experimentRoot, { recursive: true, force: true })
       }
     }
@@ -299,12 +299,12 @@ describe('CodexRuntimeHomeService', () => {
         )
         expect(readFileSync(join(dailyHome, 'config.toml'), 'utf-8')).toContain('daily')
       } finally {
-        if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
-        else process.env.LOCALAPPDATA = previousLocalAppData
-        if (previousUserDataPath === undefined) delete process.env.ORCA_USER_DATA_PATH
-        else process.env.ORCA_USER_DATA_PATH = previousUserDataPath
-        if (previousSystemHome === undefined) delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
-        else process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousSystemHome
+        if (previousLocalAppData === undefined) {delete process.env.LOCALAPPDATA}
+        else {process.env.LOCALAPPDATA = previousLocalAppData}
+        if (previousUserDataPath === undefined) {delete process.env.ORCA_USER_DATA_PATH}
+        else {process.env.ORCA_USER_DATA_PATH = previousUserDataPath}
+        if (previousSystemHome === undefined) {delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME}
+        else {process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousSystemHome}
         rmSync(labRoot, { recursive: true, force: true })
       }
     }

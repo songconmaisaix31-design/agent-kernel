@@ -128,11 +128,11 @@ describe('CodexRuntimeHomeService', () => {
         expect(readFileSync(experimentConfigPath, 'utf8')).toContain('experiment-updated')
         expect(readFileSync(dailyConfigPath, 'utf8')).toBe('model = "daily"\n')
       } finally {
-        if (previousProfilePath === undefined) delete process.env.ORCA_USER_DATA_PATH
-        else process.env.ORCA_USER_DATA_PATH = previousProfilePath
+        if (previousProfilePath === undefined) {delete process.env.ORCA_USER_DATA_PATH}
+        else {process.env.ORCA_USER_DATA_PATH = previousProfilePath}
         if (previousExperimentHome === undefined)
-          delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
-        else process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome
+          {delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME}
+        else {process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome}
         rmSync(experimentRoot, { recursive: true, force: true })
       }
     }

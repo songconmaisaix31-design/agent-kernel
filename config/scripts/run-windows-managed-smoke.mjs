@@ -79,7 +79,7 @@ function createChildEnvironment() {
 }
 
 function assertExperimentTree(homePath) {
-  if (!exists(homePath)) return
+  if (!exists(homePath)) {return}
   const pending = [homePath]
   while (pending.length > 0) {
     const current = pending.pop()
@@ -112,9 +112,9 @@ function findExistingPath(candidatePath) {
       lstatSync(current)
       return current
     } catch (error) {
-      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {throw error}
       const parent = resolve(current, '..')
-      if (parent === current) throw error
+      if (parent === current) {throw error}
       current = parent
     }
   }
@@ -125,7 +125,7 @@ function exists(path) {
     lstatSync(path)
     return true
   } catch (error) {
-    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {return false}
     throw error
   }
 }

@@ -2,9 +2,7 @@ import {
   cpSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
-  realpathSync,
   readlinkSync,
   rmdirSync,
   rmSync,
@@ -13,16 +11,28 @@ import {
   unlinkSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { join } from 'node:path'
 import {
   clearCopiedResourceMarker,
   markCopiedResource,
   targetIsOwnedFallbackCopy
 } from './codex-managed-home-resource-copy-marker'
 import { observe, observeResolvedPathEntry } from './codex-path-observation'
+import {
+  assertExperimentCodexHomeTree,
+  getExperimentCodexHomePaths,
+  getUnvalidatedOrcaUserDataPath,
+  isExperimentCodexSystemHomeEnabled
+} from './codex-experiment-home'
+
+export {
+  assertExperimentCodexHomeConfiguration,
+  getExperimentCodexHomePaths,
+  isExperimentCodexSystemHomeEnabled,
+  ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV
+} from './codex-experiment-home'
 
 const CODEX_GLOBAL_INSTRUCTIONS_ENTRY = 'AGENTS.md'
-export const ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV = 'ORCA_EXPERIMENT_CODEX_SYSTEM_HOME'
 
 const CODEX_SYSTEM_RESOURCE_ENTRIES = [
   'skills',
@@ -36,33 +46,11 @@ const CODEX_SYSTEM_RESOURCE_ENTRIES = [
 ] as const
 
 export function getSystemCodexHomePath(): string {
-  const experimentHome = resolveExperimentCodexHomePaths()
+  const experimentHome = getExperimentCodexHomePaths()
   if (experimentHome) {
     return experimentHome.systemHomePath
   }
   return join(homedir(), '.codex')
-}
-
-export function isExperimentCodexSystemHomeEnabled(): boolean {
-  return process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV] !== undefined
-}
-
-export function getExperimentCodexHomePaths(): {
-  systemHomePath: string
-  userDataPath: string
-  managedHomePath: string
-} | null {
-  return resolveExperimentCodexHomePaths()
-}
-
-/** Validates an enabled experiment before any runtime-home side effect. */
-export function assertExperimentCodexHomeConfiguration(): void {
-  const experiment = resolveExperimentCodexHomePaths()
-  if (!experiment) {
-    return
-  }
-  assertExperimentCodexHomeTree(experiment.systemHomePath)
-  assertExperimentCodexHomeTree(experiment.managedHomePath)
 }
 
 /** Path only; use when a read-only caller must not materialize the mirror. */
@@ -82,29 +70,10 @@ export function getCodexSessionBackfillStateDirPath(): string {
 
 export function getOrcaUserDataPath(): string {
   const userDataPath = getUnvalidatedOrcaUserDataPath()
-  resolveExperimentCodexHomePaths(userDataPath)
+  getExperimentCodexHomePaths()
   return userDataPath
 }
 
-function getUnvalidatedOrcaUserDataPath(): string {
-  if (process.env.ORCA_USER_DATA_PATH) {
-    return process.env.ORCA_USER_DATA_PATH
-  }
-  // Why: CLI hook commands import this module outside Electron. Mirror the CLI
-  // runtime metadata path so offline hook status/on/off uses the same userData.
-  if (process.platform === 'darwin') {
-    return join(homedir(), 'Library', 'Application Support', 'orca')
-  }
-  if (process.platform === 'win32') {
-    return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'orca')
-  }
-  return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'orca')
-}
-
-// Why: each managed home (the shared runtime mirror, or a per-account
-// self-contained CODEX_HOME that the caller has already created) links the same
-// system resources with its own ownership markers, so a per-account launch home
-// is complete without ever symlinking into or mutating the user's real ~/.codex.
 export function syncSystemCodexResourcesIntoManagedHome(managedHomePath?: string): void {
   const targetHome = managedHomePath ?? getOrcaManagedCodexHomePath()
   const systemHomePath = getSystemCodexHomePath()
@@ -117,105 +86,6 @@ export function syncSystemCodexResourcesIntoManagedHome(managedHomePath?: string
   }
 }
 
-function resolveExperimentCodexHomePaths(
-  unvalidatedUserDataPath = getUnvalidatedOrcaUserDataPath()
-): {
-  systemHomePath: string
-  userDataPath: string
-  managedHomePath: string
-} | null {
-  const rawSystemHome = process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV]
-  if (rawSystemHome === undefined) {
-    return null
-  }
-  const systemHome = rawSystemHome.trim()
-  if (!systemHome || !isAbsolute(systemHome) || !isAbsolute(unvalidatedUserDataPath)) {
-    throw new Error('Experimental Codex homes must be non-empty absolute paths.')
-  }
-  if (process.platform !== 'win32') {
-    throw new Error('Experimental Codex system home is supported only on Windows.')
-  }
-  const experimentRoot = resolve(
-    process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
-    'OrcaKernelLab'
-  )
-  const systemHomePath = resolve(systemHome)
-  const userDataPath = resolve(unvalidatedUserDataPath)
-  const managedHomePath = join(userDataPath, 'codex-runtime-home', 'home')
-  for (const candidate of [systemHomePath, userDataPath, managedHomePath]) {
-    assertExperimentPath(candidate, experimentRoot)
-  }
-  return { systemHomePath, userDataPath, managedHomePath }
-}
-
-function assertExperimentCodexHomeTree(homePath: string): void {
-  const experiment = resolveExperimentCodexHomePaths()
-  if (!experiment) {
-    return
-  }
-  const experimentRoot = resolve(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
-  assertExperimentPath(homePath, experimentRoot)
-  if (isAbsentPath(homePath)) {
-    return
-  }
-  const pending = [homePath]
-  while (pending.length > 0) {
-    const current = pending.pop()!
-    const stats = lstatSync(current)
-    if (stats.isSymbolicLink()) {
-      throw new Error(`Experimental Codex home contains a link: ${current}`)
-    }
-    if (stats.isDirectory()) {
-      for (const entry of readdirSync(current, { withFileTypes: true })) {
-        pending.push(join(current, entry.name))
-      }
-    }
-  }
-}
-
-function assertExperimentPath(candidatePath: string, experimentRoot: string): void {
-  const relativePath = relative(experimentRoot, candidatePath)
-  if (relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))) {
-    let existingPath = candidatePath
-    while (isAbsentPath(existingPath)) {
-      const parent = resolve(existingPath, '..')
-      if (parent === existingPath) {
-        break
-      }
-      existingPath = parent
-    }
-    if (isPathInside(experimentRoot, realpathSync(existingPath))) {
-      return
-    }
-  }
-  throw new Error(`Experimental Codex path escapes OrcaKernelLab: ${candidatePath}`)
-}
-
-function isAbsentPath(path: string): boolean {
-  try {
-    lstatSync(path)
-    return false
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return true
-    }
-    throw error
-  }
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    'code' in error &&
-    (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-  )
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const relativePath = relative(root, candidate)
-  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
-}
-
 export function syncCodexGlobalInstructionsIntoManagedHome({
   systemHomePath,
   managedHomePath
@@ -224,10 +94,6 @@ export function syncCodexGlobalInstructionsIntoManagedHome({
   managedHomePath: string
 }): void {
   mkdirSync(managedHomePath, { recursive: true })
-  // Why: this only runs for WSL runtime homes, whose system + managed homes are
-  // both \\wsl.localhost UNC paths. A host-side symlink there stores a Windows
-  // UNC target the distro cannot resolve, so copy the file like the config
-  // mirror does across the same boundary.
   linkSystemCodexResource(systemHomePath, managedHomePath, CODEX_GLOBAL_INSTRUCTIONS_ENTRY, {
     preferCopy: true
   })
@@ -241,11 +107,6 @@ function linkSystemCodexResource(
 ): void {
   const sourcePath = join(systemHomePath, entryName)
   const targetPath = join(managedHomePath, entryName)
-  // Why: both branches below DELETE Orca's mirrored copy because the system
-  // resource "is not there". `existsSync` and the old `catch { return false }`
-  // both reported that for a source we merely could not read, so one denied
-  // read on ~/.codex/AGENTS.md removed the managed copy on the next launch.
-  // One resolved stat now answers reachability and regular-file-ness together.
   const sourceObservation = observeResolvedPathEntry(sourcePath)
   if (sourceObservation.kind === 'indeterminate') {
     return
@@ -266,8 +127,6 @@ function linkSystemCodexResource(
       return
     }
   }
-  // Why: an unreadable target is not a missing target; do not let the fallback
-  // copier remove it merely because existsSync/lstatSync collapsed the error.
   const targetObservation = observe(() => lstatSync(targetPath))
   if (targetObservation.kind === 'indeterminate') {
     return
@@ -279,13 +138,9 @@ function linkSystemCodexResource(
     return
   }
   if (shouldRefreshFallbackCopy) {
-    // Why: WSL launch preparation runs before every Codex start. Avoid
-    // rewriting an unchanged file across the UNC boundary on every launch.
     if (entryName === CODEX_GLOBAL_INSTRUCTIONS_ENTRY) {
       const contentsMatch = copiedFileContentsMatch(sourcePath, targetPath)
       if (contentsMatch === 'match' || contentsMatch === 'indeterminate') {
-        // Why: a failed comparison is not permission to remove the only
-        // readable copy; leave it in place for the next launch.
         return
       }
     }
@@ -306,9 +161,6 @@ function linkSystemCodexResource(
     )
     clearCopiedResourceMarker(managedHomePath, entryName)
   } catch (error) {
-    // Why: Windows can reject file symlinks outside developer mode. Copy is
-    // a fallback for launch-time resources; mark ownership so later syncs can
-    // refresh the copy without touching user-created runtime resources.
     copySystemCodexResourceAsOwnedFallback(
       sourcePath,
       targetPath,

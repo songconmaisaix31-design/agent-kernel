@@ -76,6 +76,7 @@ vi.mock('node:os', async () => {
 })
 
 import {
+  assertExperimentCodexHomeConfiguration,
   getSystemCodexHomePath as getResolvedSystemCodexHomePath,
   isExperimentCodexSystemHomeEnabled,
   syncCodexGlobalInstructionsIntoManagedHome,
@@ -228,6 +229,29 @@ describe('syncSystemCodexResourcesIntoManagedHome', () => {
         syncSystemCodexResourcesIntoManagedHome()
         expect(lstatSync(runtimeSkillsPath).isSymbolicLink()).toBe(false)
         expect(readFileSync(join(runtimeSkillsPath, 'experiment.md'), 'utf8')).toBe('experiment\n')
+      } finally {
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects an external profile resource before the managed home is materialized',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-profile-link-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const externalSessionPath = join(fakeHomeDir, 'daily-session-data')
+      mkdirSync(experimentSystemHome, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      mkdirSync(externalSessionPath, { recursive: true })
+      try {
+        symlinkSync(externalSessionPath, join(experimentProfile, 'session-data'), 'junction')
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        expect(() => assertExperimentCodexHomeConfiguration()).toThrow('contains a link')
+        expect(existsSync(join(experimentProfile, 'codex-runtime-home'))).toBe(false)
       } finally {
         rmSync(experimentRoot, { recursive: true, force: true })
       }

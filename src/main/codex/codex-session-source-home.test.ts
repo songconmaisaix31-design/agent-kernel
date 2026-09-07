@@ -49,10 +49,10 @@ describe('resolveHostCodexSessionSourceHome', () => {
           })
         ).toBe(systemHome)
       } finally {
-        if (previousHome === undefined) delete process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV]
-        else process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV] = previousHome
-        if (previousProfile === undefined) delete process.env.ORCA_USER_DATA_PATH
-        else process.env.ORCA_USER_DATA_PATH = previousProfile
+        if (previousHome === undefined) {delete process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV]}
+        else {process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV] = previousHome}
+        if (previousProfile === undefined) {delete process.env.ORCA_USER_DATA_PATH}
+        else {process.env.ORCA_USER_DATA_PATH = previousProfile}
         rmSync(experimentRoot, { recursive: true, force: true })
       }
     }
