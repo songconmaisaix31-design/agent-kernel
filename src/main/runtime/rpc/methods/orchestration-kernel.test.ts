@@ -574,6 +574,168 @@ describe('Kernel service admission', () => {
     expectNoEffects()
   })
 
+  it('admits only one of two concurrent handler requests competing for the last slot', async () => {
+    for (let i = 1; i < 3; i++) {
+      const next = db.createTask({ spec: `Parallel ${i}`, runId })
+      plan.tasks.push({ ...plan.tasks[0], key: next.id, writePaths: [`src/parallel${i}.ts`] })
+    }
+    await configure()
+    db.createStartingWorkerDispatch({
+      taskId,
+      startOptions: {},
+      expectedKernelConfig: db.getRun(runId)!.kernel_config
+    })
+    let arrivals = 0
+    let release!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.mocked(runtime.showTerminal).mockImplementation(async () => {
+      arrivals++
+      if (arrivals === 2) {
+        release()
+      }
+      await barrier
+      return { handle: 'term_coord', worktreeId: 'repo::parent' } as never
+    })
+    const mutations = [1, 2].map((i) => ({
+      callerFingerprint: 'race',
+      requestId: `race-${i}`,
+      method: 'orchestration.workerStart',
+      payloadHash: `payload-${i}`
+    }))
+    const results = await Promise.allSettled(
+      plan.tasks
+        .slice(1)
+        .map((task, i) =>
+          start({ task: task.key }, { ...ctx, orchestrationMutation: mutations[i] })
+        )
+    )
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.findIndex((result) => result.status === 'rejected')
+    expect(results[rejected]).toMatchObject({ reason: { code: 'kernel_concurrency_limit' } })
+    expect(db.getMutationReceipt('race', mutations[rejected].requestId)).toBeUndefined()
+    expect(runtime.createManagedWorktree).toHaveBeenCalledOnce()
+    expect(runtime.sendTerminalAgentPrompt).toHaveBeenCalledOnce()
+    expect(
+      db.db.prepare('SELECT COUNT(*) AS n FROM dispatch_contexts WHERE run_id = ?').get(runId)
+    ).toEqual({ n: 2 })
+  })
+
+  it('counts real handler startup failures and rejects a third retry before any new resource call', async () => {
+    await configure({ repoId: 'repo', plan, limits: { maxAttempts: 10 } })
+    vi.mocked(runtime.createManagedWorktree).mockRejectedValue(new Error('Known setup failure'))
+    const first = (await start()) as { state: string; dispatchId: string }
+    expect(first.state).toBe('failed')
+    const second = (await start({ retryOf: first.dispatchId })) as {
+      state: string
+      dispatchId: string
+    }
+    expect(second.state).toBe('failed')
+    await expect(
+      start({ retryOf: second.dispatchId, limits: { maxAttemptsPerTask: 100 } })
+    ).rejects.toMatchObject({ code: 'kernel_task_attempt_limit' })
+    expect(runtime.createManagedWorktree).toHaveBeenCalledTimes(2)
+    expect(runtime.sendTerminalAgentPrompt).not.toHaveBeenCalled()
+    expect(
+      db.db.prepare('SELECT COUNT(*) AS n FROM dispatch_contexts WHERE run_id = ?').get(runId)
+    ).toEqual({ n: 2 })
+  })
+
+  it('enforces a persisted custom concurrency limit even if the start request omits or raises it', async () => {
+    const next = db.createTask({ spec: 'Next independent', runId })
+    plan.tasks.push({ ...plan.tasks[0], key: next.id, writePaths: ['src/next.ts'] })
+    await configure({ repoId: 'repo', plan, limits: { maxConcurrentWorkers: 1 } })
+    db.createStartingWorkerDispatch({
+      taskId,
+      startOptions: {},
+      expectedKernelConfig: db.getRun(runId)!.kernel_config
+    })
+    taskId = next.id
+    await expect(start({ limits: { maxConcurrentWorkers: 100 } })).rejects.toMatchObject({
+      code: 'kernel_concurrency_limit'
+    })
+    expectNoEffects()
+  })
+
+  it('anchors an old configured Run before its first disable and larger replacement plan', async () => {
+    db.db
+      .prepare('UPDATE runs SET kernel_config = ?, kernel_default_max_attempts = NULL WHERE id = ?')
+      .run(JSON.stringify({ repoId: 'repo', plan }), runId)
+    await configure(null)
+    expect(db.getRun(runId)?.kernel_default_max_attempts).toBe(2)
+    const next = db.createTask({ spec: 'Larger replacement', runId })
+    plan.tasks.push({ ...plan.tasks[0], key: next.id, writePaths: ['src/larger.ts'] })
+    await configure()
+    expect(JSON.parse(db.getRun(runId)!.kernel_config!).limits.maxAttempts).toBe(2)
+    expectNoEffects()
+  })
+
+  it.each(
+    ['tasks', 'all'].flatMap((scope) =>
+      ['managed', 'disabled', 'damaged'].map((mode) => ({ scope, mode }))
+    )
+  )(
+    'rejects history-destroying $scope reset for $mode before stopping any relay',
+    async ({ scope, mode }) => {
+      await configure()
+      if (mode === 'disabled') {
+        await configure(null)
+      }
+      if (mode === 'damaged') {
+        db.db
+          .prepare(
+            "UPDATE runs SET kernel_config = '{', kernel_default_max_attempts = NULL WHERE id = ?"
+          )
+          .run(runId)
+      }
+      const stop = vi
+        .spyOn(runtime, 'stopOrchestrationFederationRelay')
+        .mockImplementation(() => {})
+      await expect(
+        call('orchestration.reset', { [scope]: true }, { runtime })
+      ).rejects.toMatchObject({ code: 'kernel_unsupported_path' })
+      expect(stop).not.toHaveBeenCalled()
+      expect(db.getTask(taskId)).toBeDefined()
+      expectNoEffects()
+    }
+  )
+
+  it('rechecks reset policy inside the native transaction after the RPC precheck', async () => {
+    const prior = db.createStartingWorkerDispatch({ taskId, startOptions: {} })
+    vi.spyOn(runtime, 'stopOrchestrationFederationRelay').mockImplementation(() => {})
+    const original = db.resetTasks.bind(db)
+    vi.spyOn(db, 'resetTasks').mockImplementation(() => {
+      db.db.prepare('UPDATE runs SET kernel_default_max_attempts = 2 WHERE id = ?').run(runId)
+      original()
+    })
+    await expect(call('orchestration.reset', { tasks: true }, { runtime })).rejects.toMatchObject({
+      code: 'kernel_unsupported_path'
+    })
+    expect(db.getDispatchContextById(prior.dispatch.id)).toBeDefined()
+    expect(db.getTask(taskId)).toBeDefined()
+  })
+
+  it.each(['all', 'tasks'])('keeps the purely native %s reset path available', async (scope) => {
+    const stop = vi.spyOn(runtime, 'stopOrchestrationFederationRelay').mockImplementation(() => {})
+    expect(await call('orchestration.reset', { [scope]: true }, { runtime })).toEqual({
+      reset: scope
+    })
+    expect(stop).toHaveBeenCalledOnce()
+    expect(db.getTask(taskId)).toBeUndefined()
+  })
+
+  it('keeps managed message reset available without stopping relays or clearing Task state', async () => {
+    await configure()
+    const stop = vi.spyOn(runtime, 'stopOrchestrationFederationRelay').mockImplementation(() => {})
+    expect(await call('orchestration.reset', { messages: true }, { runtime })).toEqual({
+      reset: 'messages'
+    })
+    expect(stop).not.toHaveBeenCalled()
+    expect(db.getTask(taskId)).toBeDefined()
+    expect(db.getRun(runId)?.kernel_config).not.toBeNull()
+  })
+
   it('refuses disabling an active managed Run through the handler', async () => {
     await configure()
     await start()

@@ -43,6 +43,7 @@ export type CoordinatorStatus = 'idle' | 'running' | 'completed' | 'failed'
 export type RunRow = {
   id: string
   kernel_config?: string | null
+  kernel_default_max_attempts?: number | null
   objective: string
   home_database: string
   coordinator_handle: string | null
