@@ -2,6 +2,8 @@
 export interface PlanTask {
   key: string;
   owner: string;
+  /** Approved task body; absent in schemaVersion 1 plans created before this field. */
+  spec?: string;
   writePaths: string[];
   dependsOn: string[];
   acceptance: string[];
@@ -116,14 +118,23 @@ export function validatePlan(input: unknown): PlanValidationResult {
         fail('invalid_field', at, 'Expected a task object.');
         return;
       }
-      tasks.push({
+      const parsedTask: PlanTask = {
         key: text(field(task, 'key'), `${at}.key`),
         owner: text(field(task, 'owner'), `${at}.owner`),
         writePaths: strings(field(task, 'writePaths'), `${at}.writePaths`, true),
         dependsOn: strings(field(task, 'dependsOn'), `${at}.dependsOn`),
         acceptance: strings(field(task, 'acceptance'), `${at}.acceptance`, true),
         escalateWhen: strings(field(task, 'escalateWhen'), `${at}.escalateWhen`),
-      });
+      };
+      if (Object.hasOwn(task, 'spec')) {
+        const spec = field(task, 'spec');
+        if (typeof spec !== 'string' || spec.trim().length === 0) {
+          fail('invalid_field', `${at}.spec`, 'Expected a nonempty string.');
+        } else {
+          parsedTask.spec = spec;
+        }
+      }
+      tasks.push(parsedTask);
     });
   }
   // Never analyze a partially parsed graph (indices and keys may be invalid).
