@@ -33,6 +33,11 @@ import {
   type OrchestrationMessageSummary as MessageSummary
 } from '../../shared/orchestration-check-output'
 import { orchestrationMutationRecoveryError } from '../orchestration-mutation-recovery'
+import {
+  assertKernelRunUseResponse,
+  readKernelRunConfigFile,
+  type KernelRunConfigRequest
+} from './orchestration-kernel-config'
 
 // Why: 15 s is well under Claude Code's ~2 min Bash-tool silence budget while keeping log volume low. See design doc §3.4.
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 15_000
@@ -499,14 +504,37 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
   },
 
   'orchestration run-use': async ({ flags, client, cwd, json }) => {
+    const hasKernelConfig = flags.has('kernel-config')
+    const hasKernelOff = flags.has('kernel-off')
+    if (hasKernelConfig && hasKernelOff) {
+      throw new RuntimeClientError(
+        'invalid_argument',
+        'Use either --kernel-config or --kernel-off, not both.'
+      )
+    }
+    const kernelConfigPath = flags.get('kernel-config')
+    const kernel: KernelRunConfigRequest | null | undefined = hasKernelConfig
+      ? await readKernelRunConfigFile(typeof kernelConfigPath === 'string' ? kernelConfigPath : '')
+      : hasKernelOff
+        ? null
+        : undefined
     const from = await resolveCoordinatorTerminalHandle(flags, cwd, client)
     const result = await callMutation<{
-      run: { id: string; objective: string; consumer_generation: number }
+      run: {
+        id: string
+        objective: string
+        consumer_generation: number
+        kernel_config?: string | null
+      }
     }>(client, flags, 'orchestration.runUse', {
       id: getRequiredStringFlag(flags, 'id'),
       from,
-      ...(flags.has('takeover-legacy') ? { takeoverLegacy: true } : {})
+      ...(flags.has('takeover-legacy') ? { takeoverLegacy: true } : {}),
+      ...(kernel !== undefined ? { kernel } : {})
     })
+    if (kernel !== undefined) {
+      assertKernelRunUseResponse(result.result.run, kernel)
+    }
     printResult(result, json, (r) => `Using Run ${r.run.id}: ${r.run.objective}`)
   },
 
