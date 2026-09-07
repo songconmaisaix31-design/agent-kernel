@@ -17,7 +17,9 @@ describe.skipIf(process.platform !== 'win32')('run-windows-managed-smoke', () =>
           CODEX_SESSION_ID: 'daily-session',
           ELECTRON_RUN_AS_NODE: '1',
           ELECTRON_OVERRIDE_DIST_PATH: 'C:\\override',
-          ORCA_DEV_REPO_ROOT: 'C:\\daily\\orca'
+          ORCA_DEV_REPO_ROOT: 'C:\\daily\\orca',
+          PATH: 'C:\\daily\\path',
+          Path: 'C:\\daily\\path-duplicate'
         }
       }
     )
@@ -62,7 +64,10 @@ describe.skipIf(process.platform !== 'win32')('run-windows-managed-smoke', () =>
     expect(childEnv.hasCodexSessionId).toBe(false)
     expect(childEnv.hasElectronRunAsNode).toBe(false)
     expect(childEnv.hasElectronOverrideDistPath).toBe(false)
-    expect(childEnv.hasOrcaDevRepoRoot).toBe(true)
-    expect(childEnv.hasCandidateCliCommand).toBe(true)
+    expect(childEnv.candidateRepoRoot).toBe(resolve(import.meta.dirname, '..', '..'))
+    expect(childEnv.candidateProfile).toContain('native-run\\profile')
+    expect(childEnv.candidateRuntime).toContain('electron-43.1.0-win32-x64\\electron.exe')
+    expect(childEnv.candidateCliCommand).toContain('native-run\\profile\\cli\\bin\\orca-dev.cmd')
+    expect(childEnv.pathKeyCount).toBe(1)
   })
 })

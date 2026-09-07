@@ -24,12 +24,8 @@ assertExperimentTree(systemHome)
 assertExperimentTree(profile)
 
 const electronPath = join(labRoot, 'runtime', 'electron-43.1.0-win32-x64', 'electron.exe')
-const wrappers = prepareDevCliTerminalWrappers({
-  repoRoot,
-  userDataPath: profile,
-  electronExecutable: electronPath
-})
-const childEnv = createChildEnvironment(wrappers.userDataBinDir)
+const userDataBinDir = join(profile, 'cli', 'bin')
+const childEnv = createChildEnvironment(userDataBinDir)
 
 if (process.argv.includes('--print-config')) {
   process.stdout.write(`${JSON.stringify({ systemHome, profile })}\n`)
@@ -49,7 +45,11 @@ if (process.argv.includes('--print-child-env')) {
         hasElectronRunAsNode: Boolean(process.env.ELECTRON_RUN_AS_NODE),
         hasElectronOverrideDistPath: Boolean(process.env.ELECTRON_OVERRIDE_DIST_PATH),
         hasOrcaDevRepoRoot: Boolean(process.env.ORCA_DEV_REPO_ROOT),
-        hasCandidateCliCommand: process.env.ORCA_CLI_COMMAND?.endsWith('orca-dev.cmd') ?? false
+        candidateRepoRoot: process.env.ORCA_DEV_REPO_ROOT,
+        candidateProfile: process.env.ORCA_USER_DATA_PATH,
+        candidateRuntime: process.env.ORCA_APP_EXECUTABLE,
+        candidateCliCommand: process.env.ORCA_CLI_COMMAND,
+        pathKeyCount: Object.keys(process.env).filter((key) => key.toLowerCase() === 'path').length
       }))`
     ],
     { encoding: 'utf8', env: childEnv }
@@ -58,6 +58,11 @@ if (process.argv.includes('--print-child-env')) {
   process.exit(result.status ?? 1)
 }
 
+prepareDevCliTerminalWrappers({
+  repoRoot,
+  userDataPath: profile,
+  electronExecutable: electronPath
+})
 mkdirSync(systemHome, { recursive: true })
 mkdirSync(profile, { recursive: true })
 const result = spawnSync(electronPath, ['.'], {
@@ -71,9 +76,11 @@ process.exit(result.status ?? 1)
 
 function createChildEnvironment(userDataBinDir) {
   const env = { ...process.env }
+  const inheritedPath = env.Path ?? env.PATH ?? ''
   for (const key of Object.keys(env)) {
     if (
-      /^(ANTHROPIC_|CLAUDE_|CODEX_|COPILOT_|CURSOR_|ELECTRON_|GEMINI_|OPENAI_|ORCA_|PI_)/.test(key)
+      key.toLowerCase() === 'path' ||
+      /^(ANTHROPIC_|CLAUDE_|CODEX_|COPILOT_|CURSOR_|ELECTRON_|GEMINI_|OPENAI_|ORCA_|PI_)/i.test(key)
     ) {
       delete env[key]
     }
@@ -84,7 +91,9 @@ function createChildEnvironment(userDataBinDir) {
     ORCA_USER_DATA_PATH: profile,
     ORCA_DEV_REPO_ROOT: repoRoot,
     ORCA_CLI_COMMAND: join(userDataBinDir, 'orca-dev.cmd'),
-    Path: `${userDataBinDir}${process.platform === 'win32' ? ';' : ':'}${env.Path ?? env.PATH ?? ''}`
+    ORCA_APP_EXECUTABLE: electronPath,
+    ORCA_APP_EXECUTABLE_NEEDS_APP_ROOT: '1',
+    Path: `${userDataBinDir}${process.platform === 'win32' ? ';' : ':'}${inheritedPath}`
   }
 }
 
