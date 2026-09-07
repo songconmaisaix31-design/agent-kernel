@@ -1,5 +1,6 @@
 import type { TuiAgent } from '../../../../shared/tui-agent'
 import { buildDispatchPreamble } from '../../orchestration/preamble'
+import { kernelTaskSpec } from '../../orchestration/kernel-task-contract'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 import { defineMethod, type RpcMethod } from '../core'
 import { startFederatedWorker } from './orchestration-federated-worker-start'
@@ -57,6 +58,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         params,
         orchestrationCompatibilityEvidence
       )
+      const taskSpec = kernelTaskSpec(kernelSnapshot, task.id, task.spec)
       if (params.on) {
         return startFederatedWorker({
           params,
@@ -249,7 +251,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         const preamble = buildDispatchPreamble({
           taskId: task.id,
           dispatchId: started.dispatch.id,
-          taskSpec: task.spec,
+          taskSpec,
           coordinatorHandle: params.from,
           workerHandle: terminalHandle,
           dispatchCapability: capability,

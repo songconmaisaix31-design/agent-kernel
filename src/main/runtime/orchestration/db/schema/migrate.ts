@@ -19,6 +19,9 @@ export function migrate(this: OrchestrationDb): void {
     if (current < 30 && !this.hasColumn('runs', 'kernel_config')) {
       this.db.exec('ALTER TABLE runs ADD COLUMN kernel_config TEXT')
     }
+    if (current < 31 && !this.hasColumn('runs', 'kernel_default_max_attempts')) {
+      this.db.exec('ALTER TABLE runs ADD COLUMN kernel_default_max_attempts INTEGER')
+    }
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
     this.db.exec('COMMIT')
   } catch (err) {

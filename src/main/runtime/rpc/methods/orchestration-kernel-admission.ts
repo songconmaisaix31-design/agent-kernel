@@ -4,6 +4,7 @@ import type { OrchestrationCompatibilityEvidence } from '../../../../shared/orch
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import {
   assertKernelWorkerPolicy,
+  assertKernelRunOwner,
   readKernelRunConfig
 } from '../../orchestration/kernel-run-config'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
@@ -11,12 +12,11 @@ import type { RunRow } from '../../orchestration/types'
 import type { WorkerStartInput } from './orchestration-worker-start-schema'
 import { resolveRunScope } from './orchestration-run-scope'
 
-export function requireKernelCoordinator(
+function verifiedKernelCaller(
   runtime: OrcaRuntimeService,
-  runId: string,
   from: string,
   evidence?: OrchestrationCompatibilityEvidence
-): RunRow {
+) {
   const caller =
     evidence &&
     runtime.verifyOrchestrationCompatibilityCaller(evidence, {
@@ -28,6 +28,16 @@ export function requireKernelCoordinator(
       'Kernel changes require the verified Run coordinator.'
     )
   }
+  return caller
+}
+
+export function requireKernelCoordinator(
+  runtime: OrcaRuntimeService,
+  runId: string,
+  from: string,
+  evidence?: OrchestrationCompatibilityEvidence
+): RunRow {
+  const caller = verifiedKernelCaller(runtime, from, evidence)
   return resolveRunScope(runtime, {
     runId,
     callerTerminalHandle: from,
@@ -35,6 +45,43 @@ export function requireKernelCoordinator(
     requireCurrentConsumer: true,
     callerEvidence: evidence
   })
+}
+
+export function prepareKernelRunBinding(
+  runtime: OrcaRuntimeService,
+  runId: string,
+  from: string,
+  evidence?: OrchestrationCompatibilityEvidence
+) {
+  const caller = verifiedKernelCaller(runtime, from, evidence)
+  const owner = { terminalHandle: caller.terminalHandle, paneKey: caller.paneKey }
+  const db = runtime.getOrchestrationDb()
+  const expected = db.getRun(runId)
+  if (!expected) {
+    throw new OrchestrationError('run_not_found', 'Kernel Run was not found.')
+  }
+  assertKernelRunOwner(db, expected, owner)
+  return {
+    paneKey: caller.paneKey,
+    validate: (current: RunRow) => {
+      if (
+        current.consumer_generation !== expected.consumer_generation ||
+        current.kernel_config !== expected.kernel_config
+      ) {
+        throw new OrchestrationError(
+          'consumer_fenced',
+          'Kernel Run changed before owner restoration.'
+        )
+      }
+      assertKernelRunOwner(db, current, owner)
+      const config = readKernelRunConfig(current)
+      if (config && !config.owner) {
+        db.db
+          .prepare('UPDATE runs SET kernel_config = ? WHERE id = ?')
+          .run(JSON.stringify({ ...config, owner }), current.id)
+      }
+    }
+  }
 }
 
 export function admitKernelWorkerStart(

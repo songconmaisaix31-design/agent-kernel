@@ -5,6 +5,7 @@ export function createCoreTablesSql(): string {
 CREATE TABLE IF NOT EXISTS runs (
   id                    TEXT PRIMARY KEY,
   kernel_config         TEXT,
+  kernel_default_max_attempts INTEGER,
   objective             TEXT NOT NULL,
   home_database         TEXT NOT NULL DEFAULT 'this_database',
   coordinator_handle    TEXT,

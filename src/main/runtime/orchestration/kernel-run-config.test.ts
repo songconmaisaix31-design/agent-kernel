@@ -203,16 +203,51 @@ describe('Kernel Run persistence', () => {
       coordinatorPaneKey: 'pane_old'
     })
     const task = db.createTask({ spec: 'Persist', runId: original.id })
-    db.db.exec('ALTER TABLE runs DROP COLUMN kernel_config; PRAGMA user_version = 29')
+    db.db.exec(
+      'ALTER TABLE runs DROP COLUMN kernel_config; ALTER TABLE runs DROP COLUMN kernel_default_max_attempts; PRAGMA user_version = 29'
+    )
     db.close()
     db = new OrchestrationDb(file)
-    expect(db.db.pragma('user_version', { simple: true })).toBe(30)
+    expect(db.db.pragma('user_version', { simple: true })).toBe(31)
     const migrated = db.getRun(original.id)!
     expect(migrated).toMatchObject({ objective: 'Before Kernel', kernel_config: null })
     plan.tasks[0].key = task.id
     configureKernelRun(db, migrated, { repoId: 'repo', plan })
     db.close()
     db = new OrchestrationDb(file)
-    expect(readKernelRunConfig(db.getRun(original.id)!)).toEqual({ repoId: 'repo', plan })
+    expect(readKernelRunConfig(db.getRun(original.id)!)).toMatchObject({
+      repoId: 'repo',
+      plan,
+      owner: { terminalHandle: 'term_old', paneKey: 'pane_old' }
+    })
+  })
+
+  it('upgrades a v30 configured Run without losing attempts and persists its default anchor', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'orca-kernel-v30-'))
+    directories.push(directory)
+    const file = join(directory, 'orchestration.db')
+    db.close()
+    db = new OrchestrationDb(file)
+    run = db.createRun({
+      objective: 'Old configured Run',
+      coordinatorHandle: 'term_coord',
+      coordinatorPaneKey: 'pane_coord'
+    })
+    plan.tasks[0].key = db.createTask({ spec: 'Prior attempt', runId: run.id }).id
+    const prior = db.createStartingWorkerDispatch({ taskId: plan.tasks[0].key, startOptions: {} })
+    db.failWorkerStart(prior.dispatch.id, 'setup', 'Prior failure')
+    db.db
+      .prepare('UPDATE runs SET kernel_config = ? WHERE id = ?')
+      .run(JSON.stringify({ repoId: 'repo', plan }), run.id)
+    db.db.exec('ALTER TABLE runs DROP COLUMN kernel_default_max_attempts; PRAGMA user_version = 30')
+    db.close()
+    db = new OrchestrationDb(file)
+    expect(db.db.pragma('user_version', { simple: true })).toBe(31)
+    expect(readKernelRunConfig(db.getRun(run.id)!)?.limits.maxAttempts).toBe(2)
+    configureKernelRun(db, db.getRun(run.id)!, { repoId: 'repo', plan })
+    db.close()
+    db = new OrchestrationDb(file)
+    expect(db.getRun(run.id)?.kernel_default_max_attempts).toBe(2)
+    expect(db.getWorkerDispatch(prior.dispatch.id)?.state).toBe('failed')
   })
 })

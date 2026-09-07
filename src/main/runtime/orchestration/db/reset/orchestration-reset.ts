@@ -1,11 +1,19 @@
 import { LEGACY_RUN_ID } from '../contract-constants'
 import type { OrchestrationDb } from '../orchestration-db'
+import { assertKernelHistoryResetAllowed } from '../../kernel-run-limits'
 
 // ── Lifecycle ──
 
-export function runResetTransaction(this: OrchestrationDb, statements: string): void {
+export function runResetTransaction(
+  this: OrchestrationDb,
+  statements: string,
+  protectKernelHistory = false
+): void {
   this.db.exec('BEGIN IMMEDIATE')
   try {
+    if (protectKernelHistory) {
+      assertKernelHistoryResetAllowed(this)
+    }
     this.db.exec(statements)
     this.db.exec('COMMIT')
   } catch (error) {
@@ -20,7 +28,8 @@ export function runResetTransaction(this: OrchestrationDb, statements: string): 
 
 export function resetAll(this: OrchestrationDb): void {
   // Why: retain mutation receipts so a lost reset response cannot replay as a new mutation.
-  this.runResetTransaction(`
+  this.runResetTransaction(
+    `
     DELETE FROM coordinator_runs;
     DELETE FROM decision_gates;
     DELETE FROM remote_questions;
@@ -43,14 +52,17 @@ export function resetAll(this: OrchestrationDb): void {
     DELETE FROM runs;
     INSERT INTO runs (id, objective, home_database, consumer_generation, legacy)
       VALUES ('${LEGACY_RUN_ID}', 'Legacy orchestration state (inspect only)', 'this_database', 0, 1);
-  `)
+  `,
+    true
+  )
   this.hasAnyDispatchContextsCache = undefined
 }
 
 export function resetTasks(this: OrchestrationDb): void {
   // Why: messages survive this scope, so question threads are closed rather than deleted — an orphaned
   // question message would otherwise answer as a generic reply while legacy acknowledgment rejects it.
-  this.runResetTransaction(`
+  this.runResetTransaction(
+    `
     DELETE FROM coordinator_runs;
     DELETE FROM decision_gates;
     DELETE FROM remote_questions;
@@ -69,7 +81,9 @@ export function resetTasks(this: OrchestrationDb): void {
     DELETE FROM worker_dispatches;
     DELETE FROM dispatch_contexts;
     DELETE FROM tasks;
-  `)
+  `,
+    true
+  )
   this.hasAnyDispatchContextsCache = undefined
 }
 

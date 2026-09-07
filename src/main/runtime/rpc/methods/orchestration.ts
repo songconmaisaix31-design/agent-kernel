@@ -30,6 +30,7 @@ import {
 import { resolveRunScope } from './orchestration-run-scope'
 import { ORCHESTRATION_RUN_METHODS } from './orchestration-runs'
 import { rejectKernelDispatch } from './orchestration-kernel-admission'
+import { assertKernelHistoryResetAllowed } from '../../orchestration/kernel-run-limits'
 import { ORCHESTRATION_WORKER_METHODS } from './orchestration-worker-methods'
 import { ORCHESTRATION_FEDERATION_METHODS } from './orchestration-federation-methods'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
@@ -1915,6 +1916,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
     params: ResetParams,
     handler: (params, { runtime }) => {
       const db = runtime.getOrchestrationDb()
+      if (params.all || params.tasks) {
+        assertKernelHistoryResetAllowed(db)
+      }
       if (params.all) {
         runtime.stopOrchestrationFederationRelay()
         db.resetAll()

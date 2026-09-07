@@ -2,16 +2,29 @@ import type { OrchestrationDb } from './db'
 import { validatePlan, type Plan } from './kernel-plan'
 import { OrchestrationError } from './orchestration-error'
 import type { RunRow } from './types'
+import { isEquivalentPaneKey } from './db/pane-key-match'
+import {
+  assertKernelLimits,
+  kernelOccupiedSlots,
+  parseKernelLimits,
+  type KernelLimits
+} from './kernel-run-limits'
 
-export type KernelRunConfig = { repoId: string; plan: Plan }
+export type KernelOwner = { terminalHandle: string; paneKey: string }
+export type KernelRunConfig = {
+  repoId: string
+  plan: Plan
+  owner?: KernelOwner
+  limits: KernelLimits
+}
 
-export function parseKernelRunConfig(input: unknown): KernelRunConfig {
+export function parseKernelRunConfig(input: unknown, defaultMaxAttempts?: number): KernelRunConfig {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new OrchestrationError('kernel_config_invalid', 'Kernel configuration must be an object.')
   }
   const value = input as Record<string, unknown>
   if (
-    Object.keys(value).some((key) => key !== 'repoId' && key !== 'plan') ||
+    Object.keys(value).some((key) => !['repoId', 'plan', 'owner', 'limits'].includes(key)) ||
     typeof value.repoId !== 'string' ||
     !value.repoId.trim() ||
     value.repoId !== value.repoId.trim()
@@ -29,7 +42,72 @@ export function parseKernelRunConfig(input: unknown): KernelRunConfig {
       checked.errors
     )
   }
-  return { repoId: value.repoId, plan: checked.plan }
+  let owner: KernelOwner | undefined
+  if ('owner' in value) {
+    const candidate = value.owner as Record<string, unknown> | null
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      Array.isArray(candidate) ||
+      Object.keys(candidate).length !== 2 ||
+      !['terminalHandle', 'paneKey'].every(
+        (key) =>
+          typeof candidate[key] === 'string' &&
+          (candidate[key] as string).trim().length > 0 &&
+          candidate[key] === (candidate[key] as string).trim()
+      )
+    ) {
+      throw new OrchestrationError('kernel_config_invalid', 'Stored Kernel owner is invalid.')
+    }
+    owner = {
+      terminalHandle: candidate.terminalHandle as string,
+      paneKey: candidate.paneKey as string
+    }
+  }
+  return {
+    repoId: value.repoId,
+    plan: checked.plan,
+    ...(owner ? { owner } : {}),
+    limits: parseKernelLimits(value.limits, defaultMaxAttempts ?? 2 * checked.plan.tasks.length)
+  }
+}
+
+export function assertKernelRunOwner(db: OrchestrationDb, run: RunRow, caller: KernelOwner): void {
+  const config = readKernelRunConfig(run)
+  const sameOwner = (owner: KernelOwner) =>
+    owner.terminalHandle === caller.terminalHandle &&
+    isEquivalentPaneKey(owner.paneKey, caller.paneKey)
+  const currentOwner =
+    run.coordinator_handle && run.coordinator_pane_key
+      ? { terminalHandle: run.coordinator_handle, paneKey: run.coordinator_pane_key }
+      : null
+  if (
+    run.legacy ||
+    (currentOwner && !sameOwner(currentOwner)) ||
+    ((!run.coordinator_handle || !run.coordinator_pane_key) &&
+      (run.coordinator_handle !== null || run.coordinator_pane_key !== null))
+  ) {
+    throw new OrchestrationError('consumer_fenced', 'Run has a different or invalid current owner.')
+  }
+  if (config?.owner) {
+    if (sameOwner(config.owner)) {
+      return
+    }
+  } else if (currentOwner) {
+    return
+  } else {
+    // Narrow legacy compatibility: a single native coordinator history entry, not any prior caller.
+    const history = db.db
+      .prepare('SELECT terminal_handle FROM run_coordinator_handles WHERE run_id = ?')
+      .all(run.id) as { terminal_handle: string }[]
+    if (history.length === 1 && history[0].terminal_handle === caller.terminalHandle) {
+      return
+    }
+  }
+  throw new OrchestrationError(
+    'consumer_fenced',
+    'Only the proven original Kernel owner may restore this Run.'
+  )
 }
 
 export function readKernelRunConfig(run: RunRow): KernelRunConfig | null {
@@ -46,7 +124,7 @@ export function readKernelRunConfig(run: RunRow): KernelRunConfig | null {
     )
   }
   // Why: serialized null or an unknown version must not silently disable protection.
-  return parseKernelRunConfig(input)
+  return parseKernelRunConfig(input, run.kernel_default_max_attempts ?? undefined)
 }
 
 export function assertKernelTaskBindings(
@@ -114,12 +192,13 @@ export function assertKernelWorkerPolicy(
   if (!planned) {
     throw new OrchestrationError('kernel_task_unapproved', 'Task is not approved by this Run.')
   }
-  if (planned.dependsOn.some((key) => db.getTask(key)?.status !== 'completed')) {
+  if (planned.dependsOn.length > 0) {
     throw new OrchestrationError(
-      'kernel_dependency_pending',
-      'Native Task dependencies are not completed.'
+      'kernel_dependency_unsupported',
+      'Managed dependent Tasks require trusted acceptance and landed code; native completion is insufficient.'
     )
   }
+  assertKernelLimits(db, run.id, taskId, config.limits)
 }
 
 export function assertKernelLowLevelDispatch(db: OrchestrationDb, taskId: string): void {
@@ -138,14 +217,20 @@ export function configureKernelRun(
   expectedRun: RunRow,
   input: unknown
 ): RunRow {
-  const config = input === null ? null : parseKernelRunConfig(input)
+  if (input && typeof input === 'object' && 'owner' in input) {
+    throw new OrchestrationError('kernel_config_invalid', 'Kernel owner is assigned by the server.')
+  }
+  let config = input === null ? null : parseKernelRunConfig(input)
   db.db.exec('BEGIN IMMEDIATE')
   try {
     const run = db.getRun(expectedRun.id)
     if (
       !run ||
       run.legacy ||
+      !run.coordinator_handle ||
+      !run.coordinator_pane_key ||
       run.consumer_generation !== expectedRun.consumer_generation ||
+      run.coordinator_handle !== expectedRun.coordinator_handle ||
       run.coordinator_pane_key !== expectedRun.coordinator_pane_key
     ) {
       throw new OrchestrationError(
@@ -153,29 +238,37 @@ export function configureKernelRun(
         'The Run coordinator changed before configuration.'
       )
     }
-    const active = db.db
-      .prepare(`
-      SELECT 1 FROM dispatch_contexts WHERE run_id = ? AND status IN ('pending', 'dispatched')
-      UNION ALL
-      SELECT 1 FROM worker_dispatches worker
-      JOIN dispatch_contexts dispatch ON dispatch.id = worker.dispatch_id
-      WHERE dispatch.run_id = ? AND worker.state NOT IN ('succeeded', 'failed', 'stopped', 'abandoned')
-      UNION ALL
-      SELECT 1 FROM worker_terminal_resources resource
-      JOIN dispatch_contexts dispatch ON dispatch.id = resource.owner_dispatch_id
-      WHERE dispatch.run_id = ? AND resource.ownership_state != 'released'
-        AND resource.release_state != 'released'
-      LIMIT 1
-    `)
-      .get(run.id, run.id, run.id)
+    const active = kernelOccupiedSlots(db, run.id)
     if (active) {
       throw new OrchestrationError(
         'kernel_run_active',
         'Stop or release existing Run resources before changing Kernel configuration.'
       )
     }
+    const owner = {
+      terminalHandle: run.coordinator_handle,
+      paneKey: run.coordinator_pane_key
+    }
+    if (run.kernel_config != null) {
+      assertKernelRunOwner(db, run, owner)
+    }
+    const original = readKernelRunConfig(run)
+    const originalTaskCount = original?.plan.tasks.length ?? config?.plan.tasks.length
+    const anchor =
+      run.kernel_default_max_attempts ??
+      (originalTaskCount === undefined ? null : 2 * originalTaskCount)
+    if (anchor !== null) {
+      // Preserve a v30 plan's original ceiling even when its first post-upgrade operation is disable.
+      db.db
+        .prepare(
+          'UPDATE runs SET kernel_default_max_attempts = COALESCE(kernel_default_max_attempts, ?) WHERE id = ?'
+        )
+        .run(anchor, run.id)
+    }
     if (config) {
+      config = parseKernelRunConfig(input, anchor ?? undefined)
       assertKernelTaskBindings(db, run.id, config)
+      config.owner = original?.owner ?? owner
     }
     db.db
       .prepare("UPDATE runs SET kernel_config = ?, updated_at = datetime('now') WHERE id = ?")

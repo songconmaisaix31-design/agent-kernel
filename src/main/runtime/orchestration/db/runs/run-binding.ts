@@ -11,6 +11,7 @@ export function bindRun(
     coordinatorHandle: string
     coordinatorPaneKey: string
     takeoverLegacy?: boolean
+    kernelBeforeBind?: (run: RunRow) => void
     legacyCoordinatorAuthority?: {
       runId: string
       principalId: string | null
@@ -27,6 +28,13 @@ export function bindRun(
       this.db.exec('ROLLBACK')
       return undefined
     }
+    if (run.kernel_config != null && !params.kernelBeforeBind) {
+      throw new OrchestrationError(
+        'consumer_fenced',
+        'Managed Run binding requires verified owner admission.'
+      )
+    }
+    params.kernelBeforeBind?.(run)
     const sameBinding =
       run.coordinator_pane_key !== null &&
       isEquivalentPaneKey(run.coordinator_pane_key, params.coordinatorPaneKey)

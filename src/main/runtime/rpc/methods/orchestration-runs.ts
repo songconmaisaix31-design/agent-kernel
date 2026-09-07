@@ -9,7 +9,7 @@ import type {
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 import { assertCallerHandleMatchesEvidence } from './orchestration-run-scope'
 import { configureKernelRun } from '../../orchestration/kernel-run-config'
-import { requireKernelCoordinator } from './orchestration-kernel-admission'
+import { requireKernelCoordinator, prepareKernelRunBinding } from './orchestration-kernel-admission'
 
 const RunCreateParams = z.object({
   objective: requiredString('Missing --objective'),
@@ -82,7 +82,7 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
       }
     ) => {
       const storedRun = runtime.getOrchestrationDb().getRun(params.id)
-      if (params.kernel !== undefined || storedRun?.kernel_config != null) {
+      if (params.kernel !== undefined) {
         const current = requireKernelCoordinator(
           runtime,
           params.id,
@@ -94,7 +94,17 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
           return { run, binding: { consumerGeneration: run.consumer_generation } }
         }
       }
-      const paneKey = requireCallerPane(runtime, params.from, callerAuthority)
+      const kernelBinding =
+        storedRun?.kernel_config != null
+          ? prepareKernelRunBinding(
+              runtime,
+              params.id,
+              params.from,
+              orchestrationCompatibilityEvidence
+            )
+          : undefined
+      const paneKey =
+        kernelBinding?.paneKey ?? requireCallerPane(runtime, params.from, callerAuthority)
       if (
         params.takeoverLegacy &&
         (callerAuthority?.terminalHandle !== params.from || callerAuthority.paneKey !== paneKey)
@@ -113,6 +123,7 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
         coordinatorHandle: params.from,
         coordinatorPaneKey: paneKey,
         takeoverLegacy: params.takeoverLegacy,
+        kernelBeforeBind: kernelBinding?.validate,
         legacyCoordinatorAuthority
       })
       if (!run) {
