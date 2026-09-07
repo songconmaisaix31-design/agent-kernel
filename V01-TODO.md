@@ -1,6 +1,6 @@
 # Orca-Kernel v0.1 唯一执行看板
 
-本看板沿用当前总控、原 A 规则 Worker 与 B 接入 Worker；从 [首批成果](https://github.com/songconmaisaix31-design/Multi-agent-kernel/tree/08d1ff6b8f2a0df4cce538213d7943508a18e5d2) 迁入。旧库仅保留历史和开发位置指针，不维护另一份活跃计划。
+本看板沿用当前总控和原 A/B 轨道；A 在原任务完成后自然交接 terra 会话，B 复用原接入 Worker。从 [首批成果](https://github.com/songconmaisaix31-design/Multi-agent-kernel/tree/08d1ff6b8f2a0df4cce538213d7943508a18e5d2) 迁入。旧库仅保留历史和开发位置指针，不维护另一份活跃计划。
 
 正式仓库：[公开 Orca Fork](https://github.com/songconmaisaix31-design/orca-kernel)。复用账号已有 Fork，父仓及 source 均为 stablyai/orca。固定起点 U=`f32ce859047a85a3ea4f507f633604dfbf596a0e`（v1.4.188）；tag 对象 `8e9d661e4f515b17a90e6916ab193367f09f42e9`，解引用与 U 一致。U 是当前开发历史的祖先，不是当前 HEAD。Fork 原 main 保留；未升级到最新 main，未改旧库可见性或历史。
 
@@ -16,26 +16,46 @@
 | B | 顺序修 R1/R2/R3/R5；原 Run 配置、RPC 准入/派发、DB 事务及相邻测试；必要小模块限 src/main/runtime/orchestration/kernel-*、src/main/runtime/rpc/methods/orchestration-kernel-* | 原 B 强模型会话续做；复现反例，E3 总控审查；不改 A 的 CLI/Plan 文件 |
 | 总控 | 本看板、最小决策/用量记录、环境与验收 | E0 工具跑最终组合测试/类型/main 构建；最多两个写 Worker，不增常驻模型池；领域错误退 owner |
 
-短决策：R1 在真实依赖接纳/代码落地尚无可信事实前，受管有依赖任务明确拒绝，独立任务可用；R2 仅受验证的原协调者可恢复自己切离的 Run，Worker 不可接管；R3 从持久化计划生成当前 Task 短契约并进入实际发送，关闭模式原样；R4 只接原 runUse RPC，旧服务未确认 Kernel 配置时不报启用成功；R5 在原事务内限制 Run 活跃资源与累计尝试，未释放/停止中/未知资源保守占用，失败重试消耗尝试。不新建调度/预算数据库。
+短决策：R1 在真实依赖接纳/代码落地尚无可信事实前，受管有依赖任务明确拒绝，独立任务可用；R2 仅受验证的原协调者可恢复自己切离的 Run，Worker 不可接管；R3 从持久化计划生成当前 Task 短契约并进入实际发送，关闭模式原样；R4 只接原 runUse RPC，旧服务未确认 Kernel 配置时不报启用成功；R5 在原事务内限制 Run 活跃资源与累计尝试，未释放/停止中/未知资源保守占用，失败重试消耗尝试。不新建调度/预算数据库。R5 窄审查确认 reset tasks/all 会删除累计事实，批准在原 RPC 和 db/reset/orchestration-reset.ts 的既有事务内拒绝删除受管或曾受管历史；messages 和纯原生库保持原行为。
 
 每项只传一张任务卡和入口；完整输出留仓外日志，回传退出码/发现执行数/必要失败；原生 check --wait 后处理整批再 ACK，不逐终端刷屏。E1/E2 一次实施加一次有证据修正仍失败则诊断/升级；网络/环境/回执失败先定位，不据超时升级。Worker 不递归派发。
 
-能力盘点：本机 Codex 0.153.4 模型目录列出 luna、terra、sol、astra；terra 支持 medium。首次真实 A 任务核对 Orca requested/effective 和会话元数据，不静默回落。余额、计费通道及任务级 token/费用暂未知，不据墙钟或 Agent 数估算，不购买额度或切付费通道。有数值预算再预留约 30% 强模型资源；无数值则用窄批次/有限返修约束，不让低档代签关键验收。
+本批收尾纠偏：同类命令零发现不得反复试参，交 E0 使用已验证命令或准确汇总逐文件原始结果。Worker 最终报告前先处理协调消息；原生 succeeded 不替代总控验收，必要构建未过不得放行。需要返修/复用的会话先保留，完成真实验收后再决定释放，避免重复消耗恢复上下文。
+
+能力盘点：本机 Codex 0.153.4 模型目录列出 luna、terra、sol、astra；terra 支持 medium。实际验证了 A 的 Orca requested/effective 和 Codex turn_context，均为 terra/medium；目录出现不等于其他模型已实跑。订阅周额度读取过一次，任务级费用、总控本轮独立 token 和强模型独立预算未获取，不据墙钟或 Agent 数估算，不购买额度或切付费通道。有可执行数值预算再预留约 30% 强模型资源；当前采用窄批次/有限返修约束，不让低档代签关键验收。
 
 | 任务/提交 | 风险 | 请求模型/effort | 实际模型证据 | 升级 | 用量/未知项 | 验收 |
 |---|---|---|---|---|---|---|
 | A R4 / task_aa77d7575448 | 中 | gpt-5.6-terra / medium | ctx_1aaf4bfdf205 requested/effective 相同；Codex 实际 turn_context 确认 terra/medium | 0；一次定向修正 | 会话 usage 可读，任务费用未知；继承 fast 不视作低成本证明 | ef7c1f6 已核对远端；Vitest 1 文件发现/执行 21 条全过，CLI 类型检查通过；agent_prompt_stalled 回执保持 failed，同一执行者普通交接完成 |
-| B R1/R2/R3/R5 / task_5bc6f1c39b34 | 高 | 原 gpt-6-astra / high | Codex /status 确认；ctx_6b7bf0bcc32e 复用会话 ready | 0 | 11:29 刷新周额度 99%；原 7% 为 stale。周额度不是任务/强模型独立预算，token/费用不可分摊 | 执行中 |
+| B R1/R2/R3/R5 / task_5bc6f1c39b34 | 高 | 原 gpt-6-astra / high | Codex /status 和 turn_context 确认；ctx_6b7bf0bcc32e 复用会话 | 0 | 11:29 刷新周额度 99%；原 7% 为 stale。周额度不是任务/强模型独立预算，旧会话 token 不可全归本批 | ea4283d 已核对远端；11 文件执行 356 条全过、原 Node 类型和 16 文件静态检查通过；原生 worker_done succeeded，release 为 retained/external_terminal、无进程操作 |
+| 集成 / task_4db9201a8bfd | 中；关键放行归总控 E3 | 复用 A 的 terra / medium | ctx_2a22c88b4df0 ready/input_accepted | 0；总控独立诊断 | 与 A 共用计数区段，不拆成两份账单 | 2f70b94 已 push；12 文件逐个发现/执行 381 条全过。worker_done 虽 succeeded，但构建未过且文件超行数，总控拒收后返修 |
+| 收尾 / task_57d94d2ef7a2 | 低至中；E0 检查/E2 辅助代码 | 恢复同一 terra / medium session | 新终端恢复原 session；ctx_7f7510538b6c 输入回执 failed | 0；无新模型会话 | 恢复后计数重置，单列区段 | 最终 8d7e1a7508f8f9cfe45d148f70ad6c2a5d42054d 已核对远端；66 条受影响测试、三类型、21 文件静态、main 均通过。普通源码交付，不伪造 worker_done |
 
 R5 局部默认：maxConcurrentWorkers=2、maxAttemptsPerTask=2、maxAttempts=2×首次计划任务数；均须有限正整数，实际计数读取原 Run 记录，更新配置不清零。获准沿用 runs 增加 nullable kernel_default_max_attempts 保存首次默认值；包括旧已启用配置首次关闭，不得因换任务或 off/on 自动放大。此处是 Run 资源准入，不是跨 Run 费用上限。R2 owner 锚由已验证协调者生成并保留，不能由用户配置 JSON 冒认；旧无锚且已失去当前协调者时，只允许原生历史恰好一个协调者且与已验证调用者一致的恢复；无历史、多历史或损坏锚拒绝。
 
-集成复用本批 A 的 terra 会话，在 R4 完成后的自然边界转到原 candidate 工作树；旧 C 已停止写入，candidate 历史快进保留。本批目前只新增一个 Agent，没有为 E1 或集成另开永久会话。R4 定向修复源于总控发现服务端 owner/默认 limits 会使初稿误判合法响应；原 Worker 修复并补测。R5 审查同时要求补上旧配置首次关闭的默认锚回归。
+集成复用本批 A 的 terra 会话，在 R4 完成后的自然边界转到原 candidate 工作树；旧 C 已停止写入，candidate 历史快进保留。本批新增 1 个 Codex 会话；原终端释放异常后恢复同一 session，因此新增/恢复终端共 2 个，不能伪称没有恢复开销。共 4 项 Task、4 条实际 Dispatch；前置 worktree mismatch/agent_unconfigured 拒绝没有创建 Dispatch。没有为 E1 或集成另开永久模型池。
+
+R4 的 owner/默认 limits 响应问题、R5 旧配置首次关闭及 reset 删除历史缺口均由总控独立审查定位，退原 owner 修复。最后组合文件超行数由同一 terra 精简辅助代码，保留 4 个组合用例；总控 E0 复核通过后接纳。Orca 拒绝向确认框自动答复（agent_prompt_blocked）后，取消挂起命令；总控在已有授权的 Git 环境代执行已审查的一文件 commit/普通 push，没有代写业务代码或扩大会话权限。
+
+### 实际用量快照与本批验收
+
+数据来自本地 Codex 会话的 token_count/total_token_usage，只提取计数字段。恢复同一 session 后实际出现计数下降，因此分区段列示；这些不是每个 Task 的费用。缓存输入是输入子集，推理输出是输出子集，不重复相加；cache_write_input_tokens 实测为 0。没有账单证据，不换算金额或声称节省百分比。
+
+| 会话/区段（北京时间） | 输入 | 缓存输入 | 输出 | 推理输出 | 客户端 total |
+|---|---:|---:|---:|---:|---:|
+| B astra/high，含前批历史；截至 09-07 11:53:12 | 28,753,933 | 28,252,288 | 125,679 | 44,901 | 28,879,612 |
+| A terra/medium，R4+首次集成；11:28:31–12:01:28 | 8,960,280 | 8,740,608 | 35,859 | 13,727 | 8,996,139 |
+| 同一 A 恢复后区段；12:06:47–12:23:45 | 5,928,490 | 5,828,352 | 17,720 | 7,052 | 5,946,210 |
+
+最终源码候选为 8d7e1a7508f8f9cfe45d148f70ad6c2a5d42054d，已 push，开发分支 kernel/v01-managed-dispatch 快进接纳。12 文件发现/执行 381 条全过，最后受影响文件复验 66 条全过；不把重复次数累加成新用例。pnpm run typecheck 原三项目退出 0，新增模块收录已核对；21 文件 oxfmt/oxlint 通过；main 构建退出 0、3117 modules。具体命令、逐文件数、失败记录和运行边界见 [接入验收](docs/ORCA-INTEGRATION.md)。原始 JSON/日志及用量快照保留在实验目录 tier-candidate-20260907；公开文档不包含认证或完整会话记录。
 
 以上只用于开发，不增加实验组，不改变 CURRENT/KERNEL 正式验收；本批不启动正式实验。
 
 
 
-唯一目标已完成到服务层：validatePlan 接入真实受管派发入口，合法进入原生 workerStart，非法在执行资源创建前拒绝，关闭模式保持原生，未支持的受管低层/远端路径明确拒绝。实际运行条件仍单独列明。
+### 上批已交付基线（以下提交和 275 条结果为历史记录）
+
+上批目标已完成到服务层：validatePlan 接入真实受管派发入口，合法进入原生 workerStart，非法在执行资源创建前拒绝，关闭模式保持原生，未支持的受管低层/远端路径明确拒绝。下列 schema 30、无 CLI 的描述属于上批；本次 schema 31 和 CLI 增量以上方批次及最新验收为准。
 
 | 轨道 | 固定工作区 / 分支 / write_paths | 已交付 |
 |---|---|---|
@@ -50,7 +70,7 @@ R5 局部默认：maxConcurrentWorkers=2、maxAttemptsPerTask=2、maxAttempts=2�
 
 当前协调者通过真实 `orchestration.runUse` RPC 的可选 kernel 配置：省略不修改，显式 null 关闭；活跃派发、未知运行状态或未释放终端资源存在时拒绝变更。权限使用原生调用者证明和当前协调者校验，损坏/未知配置不能降级为原生。仅支持本地 Git new-top-level；其他受管路径明确拒绝。异步准备后和原生 DB 事务内再次核对，避免配置/任务变化漏管。
 
-## 验收证据
+## 上批验收证据（保留历史）
 
 完整复现命令、逐套数量、入口及限制见 [接入与服务层验收](docs/ORCA-INTEGRATION.md)。受测源码候选为 C 提交；最后的看板/验收提交只改文档，源码与受测候选一致。
 
@@ -80,7 +100,7 @@ R5 局部默认：maxConcurrentWorkers=2、maxAttemptsPerTask=2、maxAttempts=2�
 | G09 两组实验 | 12 次未执行 |
 | G10 交付决定 | 尚未到完整真实 v0.1 放行条件 |
 
-本批只提供 RPC 配置接入，没有新增 CLI 开关/UI。原生 Task completed 只保证原生依赖状态，不等于 Kernel accepted/merged。词法路径验证不是磁盘写入沙箱，不证明 symlink/junction、真实提交存在性或候选差异合规。全仓所有 Vitest、完整桌面构建、真实 Worker 和正式模型实验均未执行。本批源码成功不能代替这些验收。
+本次已新增 CLI 配置/关闭入口，未新增 UI；入口代码在 Fork 中，不代表日常 CURRENT 运行时已升级。原生 Task completed 不等于 Kernel accepted/merged，当前受管依赖任务明确拒绝。词法路径验证不是磁盘写入沙箱，不证明 symlink/junction、真实提交存在性或候选差异合规。全仓所有 Vitest、完整桌面构建、真实 Worker 和正式模型实验均未执行。服务层源码成功不能代替这些验收。
 
 ## 来源保留与持续授权
 
