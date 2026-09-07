@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { parseArgs, validateCommandAndFlags } from '../args'
+import { ORCHESTRATION_COMMAND_SPECS } from '../specs/orchestration'
+import { assertKernelRunUseResponse } from './orchestration-kernel-config'
 
 const callMock = vi.fn()
 const getTerminalHandleMock = vi.hoisted(() => vi.fn())
@@ -118,6 +124,194 @@ describe('lightweight Run CLI handlers', () => {
       from: 'term_current',
       takeoverLegacy: true
     })
+  })
+
+  it('accepts server owner and default limits while preserving requested Kernel values', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-kernel-config-'))
+    const kernel = {
+      repoId: 'repo_1',
+      limits: { maxConcurrent: 2 },
+      plan: {
+        schemaVersion: 1,
+        objective: 'Test Kernel CLI',
+        nonGoals: [],
+        baseCommit: 'a'.repeat(40),
+        tasks: [
+          {
+            key: 'task_1',
+            owner: 'worker',
+            writePaths: ['src/cli/handlers/orchestration.ts'],
+            dependsOn: [],
+            acceptance: ['test'],
+            escalateWhen: []
+          }
+        ]
+      }
+    }
+    const path = join(directory, 'kernel.json')
+    await writeFile(path, JSON.stringify(kernel))
+    callMock.mockResolvedValue({
+      result: {
+        run: {
+          id: 'run_1',
+          objective: 'Work',
+          kernel_config: JSON.stringify({
+            ...kernel,
+            owner: 'runtime',
+            limits: { ...kernel.limits, maxRetries: 3 }
+          })
+        }
+      }
+    })
+
+    await ORCHESTRATION_HANDLERS['orchestration run-use']({
+      flags: new Map<string, string | boolean>([
+        ['id', 'run_1'],
+        ['from', 'term_coord'],
+        ['kernel-config', path]
+      ]),
+      client: { call: callMock },
+      cwd: '/tmp/repo',
+      json: true
+    } as never)
+
+    expect(callMock).toHaveBeenCalledWith('orchestration.runUse', {
+      id: 'run_1',
+      from: 'term_coord',
+      kernel
+    })
+  })
+
+  it.each([
+    ['repoId', { repoId: 'repo_other', plan: { version: 1 }, limits: { maxConcurrent: 2 } }],
+    ['plan', { repoId: 'repo_1', plan: { version: 2 }, limits: { maxConcurrent: 2 } }],
+    ['requested limit', { repoId: 'repo_1', plan: { version: 1 }, limits: { maxConcurrent: 3 } }]
+  ])('rejects a changed %s in persisted Kernel configuration', (_field, persisted) => {
+    expect(() =>
+      assertKernelRunUseResponse(
+        { kernel_config: JSON.stringify(persisted) },
+        { repoId: 'repo_1', plan: { version: 1 }, limits: { maxConcurrent: 2 } }
+      )
+    ).toThrow(/different persisted kernel_config/)
+  })
+
+  it('registers Kernel flags with the real run-use parser and command spec', () => {
+    const configured = parseArgs([
+      'orchestration',
+      'run-use',
+      '--id',
+      'run_1',
+      '--kernel-config',
+      'kernel.json'
+    ])
+    const disabled = parseArgs(['orchestration', 'run-use', '--id', 'run_1', '--kernel-off'])
+
+    expect(() => validateCommandAndFlags(ORCHESTRATION_COMMAND_SPECS, configured)).not.toThrow()
+    expect(() => validateCommandAndFlags(ORCHESTRATION_COMMAND_SPECS, disabled)).not.toThrow()
+    expect(configured.flags.get('kernel-config')).toBe('kernel.json')
+    expect(disabled.flags.get('kernel-off')).toBe(true)
+  })
+
+  it('disables Kernel configuration only when the runtime confirms null persistence', async () => {
+    callMock.mockResolvedValue({
+      result: { run: { id: 'run_1', objective: 'Work', kernel_config: null } }
+    })
+
+    await ORCHESTRATION_HANDLERS['orchestration run-use']({
+      flags: new Map<string, string | boolean>([
+        ['id', 'run_1'],
+        ['from', 'term_coord'],
+        ['kernel-off', true]
+      ]),
+      client: { call: callMock },
+      cwd: '/tmp/repo',
+      json: true
+    } as never)
+
+    expect(callMock).toHaveBeenCalledWith('orchestration.runUse', {
+      id: 'run_1',
+      from: 'term_coord',
+      kernel: null
+    })
+  })
+
+  it('leaves native run-use unchanged without a Kernel flag', async () => {
+    callMock.mockResolvedValue({ result: { run: { id: 'run_1', objective: 'Work' } } })
+
+    await ORCHESTRATION_HANDLERS['orchestration run-use']({
+      flags: new Map([
+        ['id', 'run_1'],
+        ['from', 'term_coord']
+      ]),
+      client: { call: callMock },
+      cwd: '/tmp/repo',
+      json: true
+    } as never)
+
+    expect(callMock).toHaveBeenCalledWith('orchestration.runUse', {
+      id: 'run_1',
+      from: 'term_coord'
+    })
+  })
+
+  it('rejects missing files, invalid JSON, and mutually exclusive Kernel flags before RPC', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-kernel-config-'))
+    const invalidPath = join(directory, 'invalid.json')
+    await writeFile(invalidPath, '{')
+    const invoke = (flags: Map<string, string | boolean>) =>
+      ORCHESTRATION_HANDLERS['orchestration run-use']({
+        flags,
+        client: { call: callMock },
+        cwd: '/tmp/repo',
+        json: true
+      } as never)
+
+    await expect(
+      invoke(
+        new Map<string, string | boolean>([
+          ['id', 'run_1'],
+          ['from', 'term_coord'],
+          ['kernel-config', 'missing.json']
+        ])
+      )
+    ).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(
+      invoke(
+        new Map<string, string | boolean>([
+          ['id', 'run_1'],
+          ['from', 'term_coord'],
+          ['kernel-config', invalidPath]
+        ])
+      )
+    ).rejects.toMatchObject({ code: 'invalid_argument' })
+    await expect(
+      invoke(
+        new Map<string, string | boolean>([
+          ['id', 'run_1'],
+          ['from', 'term_coord'],
+          ['kernel-config', invalidPath],
+          ['kernel-off', true]
+        ])
+      )
+    ).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(callMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects an old runtime that silently ignores an explicit Kernel change', async () => {
+    callMock.mockResolvedValue({ result: { run: { id: 'run_1', objective: 'Work' } } })
+
+    await expect(
+      ORCHESTRATION_HANDLERS['orchestration run-use']({
+        flags: new Map<string, string | boolean>([
+          ['id', 'run_1'],
+          ['from', 'term_coord'],
+          ['kernel-off', true]
+        ]),
+        client: { call: callMock },
+        cwd: '/tmp/repo',
+        json: true
+      } as never)
+    ).rejects.toMatchObject({ code: 'kernel_config_unsupported' })
   })
 })
 

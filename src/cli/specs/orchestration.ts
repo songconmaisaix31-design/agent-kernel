@@ -18,10 +18,19 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     path: ['orchestration', 'run-use'],
     summary: 'Bind this coordinator terminal to an existing Run',
     usage:
-      'orca orchestration run-use --id <run_id> [--from <handle>] [--takeover-legacy] [--retry-request <id>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'id', 'from', 'takeover-legacy', 'retry-request'],
+      'orca orchestration run-use --id <run_id> [--from <handle>] [--kernel-config <file> | --kernel-off] [--takeover-legacy] [--retry-request <id>] [--json]',
+    allowedFlags: [
+      ...GLOBAL_FLAGS,
+      'id',
+      'from',
+      'kernel-config',
+      'kernel-off',
+      'takeover-legacy',
+      'retry-request'
+    ],
     notes: [
-      '--takeover-legacy must run in the live coordinator agent terminal it binds; it preserves existing worker assignments.'
+      '--takeover-legacy must run in the live coordinator agent terminal it binds; it preserves existing worker assignments.',
+      '--kernel-config must be a JSON object with repoId and plan; use --kernel-off to explicitly disable it.'
     ]
   },
   {
