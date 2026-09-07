@@ -114,10 +114,10 @@ export function assertKernelWorkerPolicy(
   if (!planned) {
     throw new OrchestrationError('kernel_task_unapproved', 'Task is not approved by this Run.')
   }
-  if (planned.dependsOn.some((key) => db.getTask(key)?.status !== 'completed')) {
+  if (planned.dependsOn.length > 0) {
     throw new OrchestrationError(
-      'kernel_dependency_pending',
-      'Native Task dependencies are not completed.'
+      'kernel_dependency_unsupported',
+      'Managed dependent Tasks require trusted acceptance and landed code; native completion is insufficient.'
     )
   }
 }

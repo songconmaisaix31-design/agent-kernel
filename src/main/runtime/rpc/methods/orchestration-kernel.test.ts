@@ -398,17 +398,19 @@ describe('Kernel service admission', () => {
     expectNoEffects()
   })
 
-  it('does not confuse native ready with completion of an approved serial dependency', async () => {
-    const dependencyId = taskId
-    taskId = db.createTask({ spec: 'Serial consumer', runId, deps: [dependencyId] }).id
-    plan.tasks.push({ ...plan.tasks[0], key: taskId, dependsOn: [dependencyId] })
-    await configure()
-    db.db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(taskId)
-    await expect(start()).rejects.toMatchObject({ code: 'kernel_dependency_pending' })
-    expectNoEffects()
-    db.db.prepare("UPDATE tasks SET status = 'completed' WHERE id = ?").run(dependencyId)
-    expect(await start()).toMatchObject({ state: 'ready' })
-  })
+  it.each(['ready', 'completed'])(
+    'rejects dependencies without trusted acceptance even when native status is %s',
+    async (status) => {
+      const dependencyId = taskId
+      taskId = db.createTask({ spec: 'Serial consumer', runId, deps: [dependencyId] }).id
+      plan.tasks.push({ ...plan.tasks[0], key: taskId, dependsOn: [dependencyId] })
+      await configure()
+      db.db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(taskId)
+      db.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(status, dependencyId)
+      await expect(start()).rejects.toMatchObject({ code: 'kernel_dependency_unsupported' })
+      expectNoEffects()
+    }
+  )
 
   it('rechecks low-level dispatch after async agent detection', async () => {
     vi.spyOn(runtime, 'isTerminalRunningAgent').mockImplementation(async () => {
