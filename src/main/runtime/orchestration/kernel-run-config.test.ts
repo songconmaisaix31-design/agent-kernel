@@ -56,6 +56,19 @@ describe('Kernel Run persistence', () => {
     expect(configureKernelRun(db, configured, null).kernel_config).toBeNull()
   })
 
+  it('persists approved task body bytes independently of mutable plan and native Task text', () => {
+    const approvedBody =
+      '  Add parsePort with range checks.\r\nKeep Unicode 示例 and trailing whitespace.\n '
+    plan.tasks[0].spec = approvedBody
+    const configured = configureKernelRun(db, run, { repoId: 'repo', plan })
+    plan.tasks[0].spec = 'Unapproved local revision'
+    db.db
+      .prepare('UPDATE tasks SET spec = ? WHERE id = ?')
+      .run('Unapproved native revision', plan.tasks[0].key)
+    expect(readKernelRunConfig(configured)?.plan.tasks[0].spec).toBe(approvedBody)
+    expect(readKernelRunConfig(db.getRun(run.id)!)?.plan.tasks[0].spec).toBe(approvedBody)
+  })
+
   it.each([
     {},
     { repoId: 'repo', plan: {} },

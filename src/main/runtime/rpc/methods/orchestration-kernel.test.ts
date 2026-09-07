@@ -41,6 +41,7 @@ describe('Kernel service admission', () => {
         {
           key: taskId,
           owner: 'worker',
+          spec: 'Implement parsePort in src/one.ts; reject invalid ports and test boundaries.',
           writePaths: ['src/one.ts'],
           dependsOn: [],
           acceptance: ['unit test'],
@@ -187,6 +188,7 @@ describe('Kernel service admission', () => {
     plan.tasks.push({
       ...plan.tasks[0],
       key: other.id,
+      spec: 'PRIVATE_SIBLING_BODY',
       writePaths: ['src/other.ts'],
       acceptance: ['Private sibling acceptance']
     })
@@ -212,6 +214,7 @@ describe('Kernel service admission', () => {
     expect(prompt).toContain('server-approved Task contract')
     expect(prompt).not.toContain(other.id)
     expect(prompt).not.toContain('Private sibling acceptance')
+    expect(prompt).not.toContain('PRIVATE_SIBLING_BODY')
     expect(prompt).not.toContain('Ignore the plan')
     expect(prompt).not.toContain('Request-local override')
   })
@@ -222,6 +225,51 @@ describe('Kernel service admission', () => {
     expect(prompt).toContain('Implement a file')
     expect(prompt).not.toContain('server-approved Task contract')
   })
+
+  it('requires approved task body before Dispatch or resource creation for an old plan', async () => {
+    delete plan.tasks[0].spec
+    await configure()
+    const mutation = {
+      callerFingerprint: 'body-test',
+      requestId: 'body-required',
+      method: 'orchestration.workerStart',
+      payloadHash: 'body-test'
+    }
+    await expect(start({}, { ...ctx, orchestrationMutation: mutation })).rejects.toMatchObject({
+      code: 'kernel_task_body_required',
+      message: expect.stringMatching(/body.*re-approve/i)
+    })
+    expect(db.getMutationReceipt(mutation.callerFingerprint, mutation.requestId)).toBeUndefined()
+    expectNoEffects()
+  })
+
+  it.each([false, true])(
+    'sends the persisted approved body; changes require reapproval=%s',
+    async (reapprove) => {
+      const originalBody =
+        '  实现 parsePort(value)：只接受 1..65535 的整数。\r\n非法输入抛 RangeError，并添加三个边界测试。\n  '
+      const replacementBody =
+        '  实现 formatPort(value)：输出十进制字符串。\r\n保留输入校验并添加格式测试。\n '
+      plan.tasks[0].spec = originalBody
+      await configure()
+      expect(JSON.parse(db.getRun(runId)!.kernel_config!).plan.tasks[0].spec).toBe(originalBody)
+      plan.tasks[0].spec = replacementBody
+      db.db
+        .prepare('UPDATE tasks SET spec = ? WHERE id = ?')
+        .run('Unapproved native body: edit outside the approved paths', taskId)
+      if (reapprove) {
+        await configure()
+      }
+      const expectedBody = reapprove ? replacementBody : originalBody
+      expect(JSON.parse(db.getRun(runId)!.kernel_config!).plan.tasks[0].spec).toBe(expectedBody)
+      await start()
+      const prompt = vi.mocked(runtime.sendTerminalAgentPrompt).mock.calls[0][1]
+      expect(prompt).toContain(expectedBody)
+      expect(prompt).not.toContain(reapprove ? originalBody : replacementBody)
+      expect(prompt).not.toContain('Unapproved native body')
+      expect(prompt).toContain('server-approved Task contract')
+    }
+  )
 
   it('rejects an invalid plan at the real configuration handler', async () => {
     await expect(
