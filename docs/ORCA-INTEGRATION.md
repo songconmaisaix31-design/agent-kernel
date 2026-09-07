@@ -1,3 +1,55 @@
+## 批准正文修复与真实 Worker 准备（2026-09-07）
+
+本批登记为“受管派发服务层修复候选”。R1 拒绝有依赖任务，尚不支持依赖代码落地；R2 仅恢复已验证的原协调者；R5 约束 Run 资源与尝试，不控制账户费用。尚未实现完整 v0.1。
+
+### 实际用户流程与证据
+
+| 用户操作 | 当前实际行为 | 验证层级 |
+|---|---|---|
+| 在批准计划的 Task 中填写 spec 正文，再用 Fork CLI 的 run-use --kernel-config 启用 | 原文进入持久化 kernel_config，包含 Unicode、CRLF、多行及首尾空白 | 真 CLI/注册 RPC/SQLite；执行资源为测试替身 |
+| 修改原生 Task.spec，或修改调用端原计划对象 | 派发仍发送原批准正文，不采用可变文字 | 真 handler 到 sendTerminalAgentPrompt 参数断言 |
+| 明确重新批准含新正文的计划 | 后续派发才发送新批准正文 | 真 runUse 与 SQLite |
+| 旧计划没有批准 spec | 仍可读取；worker-start 在 Dispatch、mutation receipt、工作区和终端创建前报 kernel_task_body_required；补正文并重新批准后继续 | 红绿回归保留，缺正文不再静默放行 |
+| --kernel-off | 保持原生任务正文发送 | 原有关闭回归保留 |
+| 匹配 Fork CLI/候选运行时的真实独立 Worker | 尚未启动；送达、工作区、实际提交、测试、完成、停止均未验收 | 不以以上服务测试或日常 Orca 的开发 Worker 代替 |
+
+新增批准正文是 PlanTask.spec，可选字段兼容旧 schemaVersion 1 的读取，提供时必须是非空字符串；派发必须有该字段。原生可变 Task.spec 不再是受管授权来源，也不作自动快照或临时 fallback。其他 Task 的正文不随当前任务发送。
+
+### 来源、检查与范围
+
+A 来源 b0f6dcda635d99f91906d54286f55738b6c5495b；B 合并 A 的历史提交 9e63f6144f61d66955dcf4086c78e03941a1c0da；B 正文修复 42c740fb1631a377c0e2d6b17e365f6b77537066。候选 64d28fdb4834b5f104c9f64be958399f2f9ffe3c 保留上批 8d7e1a7/f3a3521 成果；没有 reset 或强推。生产代码仅改 kernel-plan.ts 和 kernel-task-contract.ts。固定上游仍为 f32ce859047a85a3ea4f507f633604dfbf596a0e（v1.4.188），许可证及工程配置不变。
+
+最终对应回归使用原 Vitest 配置逐文件 list/run：Plan 129、持久化 20、服务/CLI 组合 69、CLI 21，共 4 文件发现与执行 239 项，0 失败/跳过。重复返修复验不累加为新增用例。原三项目 pnpm run typecheck 通过；Node 项目 listFilesOnly 收录生产模块与服务回归。CLI、main、preload、renderer 构建通过，但这些构建不是运行时验收。
+
+编译 CLI 复用原 build:cli 的 tsc 和 verify-cli-bin 步骤，仅省去全局开发命令安装；未执行 install-dev-cli.mjs，未替换 CURRENT 的 orca 命令。构建后的 node out/cli/index.js orchestration run-use --help 实际显示 --kernel-config 与 --kernel-off。
+
+B 所辖文件静态检查通过。合成候选曾因保留旧 CLI 组合回归导致 max-lines=846，已退原 B 定向返修，保留全部用例和断言、不修改规则。原 Plan 两文件 oxlint 仍失败；同配置对父版本和本批均得到 18 项相同规则诊断，原始日志保留，不把它报告成通过，不扩大成全仓加固。
+
+命令模板（所有源码检查在原 candidate 工作树）：
+
+```powershell
+$env:ELECTRON_OVERRIDE_DIST_PATH='C:/Users/DW/AppData/Local/OrcaKernelLab/node-test-electron-disabled'
+node node_modules/vitest/vitest.mjs list --config config/vitest.config.ts <单个对应测试路径> --json=<仓外列表文件>
+node node_modules/vitest/vitest.mjs run --config config/vitest.config.ts <同一测试路径> --reporter=json --outputFile=<仓外结果文件>
+pnpm run typecheck
+node node_modules/typescript/bin/tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false
+node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json
+$env:ORCA_ELECTRON_VITE_TARGET='main' # preload / renderer 分别同样执行
+node config/scripts/run-electron-vite-build.mjs --config config/electron-vite-target.config.ts --ignoreConfigWarning
+```
+
+原始日志与测试 JSON：实验目录 body-smoke-20260907；B 红绿证据 evidence/b-body-ctx1e26219942e8。早期 renderer 缺固定上游资源导致失败，已恢复所需资源后通过；大范围 promisor 下载网络失败和不完整历史 tar 均保留，未继续重复失败路线。测试用 Electron override 只是防止隐式安装，不能用它启动真实运行时。
+
+### 尚待批准的精确本地安装动作
+
+尚未执行：将本机已有缓存 electron-v43.1.0-win32-x64.zip（144237574 字节）验证并解压至 C:/Users/DW/AppData/Local/OrcaKernelLab/runtime/electron-43.1.0-win32-x64；向 candidate 的 node_modules/windows-native-registry/build/Release/native.node 补入现有 Orca 所带同版本 3.2.2 产物（155408 字节，已只读加载成功）。不安装系统组件、不提权、不重启、不改 CURRENT、不新增费用；如还需下载或编译其他原生依赖，再据实际错误收窄处理。
+
+随后以本批构建产物和独立 body-smoke-20260907/runtime-profile 启动桌面候选，使用匹配的 Fork CLI。上游 serve 默认绑定 0.0.0.0，本批没有执行它，也不申请扩大网络暴露；独立桌面配置默认绑定 loopback，仍须启动后实核。模型认证和原生 PTY 是否可用要在真实启动后验证，不拷贝完整记忆或认证内容入库。
+
+真实独立任务通过后才开展最小可信成果验收、依赖代码落地及两轨整合；12 次正式 CURRENT/KERNEL 对照不启动。
+
+---
+
 # Orca v1.4.188 接入与服务层验收
 
 本页保留首批接入研究，并记录 2026-09-07 本批实际实现。唯一执行状态见 [V01-TODO.md](../V01-TODO.md)，下方“首批历史研究”不是另一份活跃计划。
