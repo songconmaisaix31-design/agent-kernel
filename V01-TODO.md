@@ -1,5 +1,30 @@
 # 当前窄批次：批准正文与真实独立 Worker 冒烟（2026-09-07）
 
+## 20:35 续批授权：实验系统 home 窄源码与真实运行
+
+21:16 状态：源码、六类针对检查及候选桌面启动已完成；官方实验登录等待用户浏览器确认，真实受管 Worker 与短停止尚未执行。实验 config 已显式设置 `cli_auth_credentials_store = "file"`，依据 [官方认证存储说明](https://developers.openai.com/codex/auth/)；不将 CODEX_HOME 自身当作文件存储模式证明。仅停止了此前本次自有 pending 登录并重启，现保留登录 supervisor `124068`、CLI child `123992`，先前浏览器页面失效。没有复制日常刷新凭证、退出日常账户或切 API 付费。实际认证成功前不得派发模型任务。
+
+残留与失败：候选 Electron `131076`、必要返修会话、实验目录、在用 plugins.sync.lock 和当前 pending 登录保留；未发现候选启动的 OpenDesign 插件/进程，另一个无法明确归属的同名进程未动。不以此声称全局清理。上批 non-check-only 误调用及未知退出码保留，本轮没有再次调用该修复入口。普通提示发送多次返回 agent_prompt_stalled 但实际继续到同一会话，异常保留，不计作新增 Worker 或原生 worker_done。当前全程无新 Agent、无 A/B 唤醒、无恢复重置，候选真实模型任务数为 0。
+
+本轮结束快照（客户端区段计数，不是费用；缓存包含于输入、推理包含于输出）：
+
+| 执行者 / 实际模型 | 输入 | 缓存输入 | 输出 | 推理输出 | total | 截止北京时间 |
+|---|---:|---:|---:|---:|---:|---|
+| 总控 / gpt-6-astra high | 13,931,660 | 13,650,176 | 29,300 | 9,638 | 13,960,960 | 21:16:11 |
+| 同一标准执行者 / gpt-5.6-terra medium | 21,631,830 | 21,171,200 | 81,821 | 23,241 | 21,713,651 | 21:16:09 |
+
+起点取 20:35:43 用户消息前总控最后 token_count、同一标准会话续段起点；只计算本段增量，无计数重置。原始计数保存在实验 native-run/home-override-usage-start.json 与 home-override-usage-end.json，未提交完整会话/认证。快照后收尾提交和最终回复不在表内。
+
+本续批源码已完成并由同一标准执行者集成：候选 `f3f675dc07119c3c4bc299796dee36569043d49a`；其三项提交 `f720e7e` → `816cb98` → `f3f675d` 在正式分支对应 `fd3c5f5` → `4a1e0af` → `b248afd`，均普通 push。起点仍是既有 `64d28fd` 正文候选和固定上游 v1.4.188，不改变 A/B、Kernel 领域或依赖版本。
+
+新增 `ORCA_EXPERIMENT_CODEX_SYSTEM_HOME`，未设置时保留原行为；启用时只允许实核后的 OrcaKernelLab 路径。系统 home、profile 整树及受管 home 的既有链接/越界/读取错误拒绝，不回退日常目录。启动配置先设置经过完整校验的 Electron userData，再规范化环境；runtime-home 构造首行校验。资源同步使用原 owned-copy 流程，会话来源和最终受管 CODEX_HOME 接入既有链路。启动脚本清除继承的模型/会话/运行时绑定和 Electron 测试配置，诊断只打印明确字段。新校验独立到 codex-experiment-home.ts，新增 max-lines 问题已修，未降低规则。
+
+六类检查均有针对证据：默认行为、合法实验来源、非法来源副作用前拒绝、实际子进程环境、会话来源、假认证刷新及配置回写且日常假目录字节不变。六文件组实际 90 通过、3 平台条件跳过；生产 PTY 环境的真实子进程断言 1 通过、23 筛选排除。Node 类型检查、改动文件原 oxlint、CLI 编译和 main/preload/renderer 构建通过。完整 PTY 测试文件中的 WSL cwd 缺失失败保留，不当作全绿；原 18 项 Kernel 静态诊断仍另列。renderer 曾因稀疏工作树缺资源失败，同一执行者只物化当前 HEAD 的 8 个缺失跟踪资源后通过，无资源内容差异/二进制提交。命令与边界见 [本轮证据](docs/WINDOWS-MANAGED-SMOKE.md)。
+
+实际用户流程进展（21:10 回执）：候选 Electron PID `131076`，runtimeId `e61c400d-a1ca-438c-8c9e-1835c65c6494`，匹配 Fork CLI 返回 ready，仅监听 `127.0.0.1:6769` 和 `127.0.0.1:54039`。候选 profile/system/managed 目录已实际创建；官方 Codex 登录仅指向实验 system-home，等待用户浏览器确认。此时认证与会话文件尚未生成，独立受管 Worker 的送达/修改/提交/验证/worker_done 和另一个短停止场景均未执行；这不是 Docker/VM 隔离结果，也不是完整 v0.1。
+
+用户已批准来源入口、必要启动传递和六类针对性检查，取代下面历史中的待批准项。保持当前候选与原 A/B；只复用现有 terra/medium 环境会话（无新 Agent、无重新搭环境），根维护本看板并审关键边界与候选。实施路径限 Codex home / session-source、runtime-home service、必要启动/PTY 接线和对应测试、候选启动脚本与原环境报告；Kernel 领域和原 A/B 文件不另扩。顺序为源码及六类测试 → commit/push 与类型/构建 → 强总控验副作用前拒绝和实际来源 → 同一执行者启动匹配候选 → 一个独立真实任务与短停止。配置无效不回退日常目录，不改全局 HOME/USERPROFILE。认证只用专用实验登录；若不存在则官方登录并由用户确认浏览器，禁止复制 DW 正在使用的刷新凭证。用量另存 native-run/home-override-usage-start.json，按本次用户消息及同一标准会话续段计数。
+
 ## 20:10 续批实际收口：依赖通过，启动保护边界未通过
 
 源码仍为 `64d28fdb4834b5f104c9f64be958399f2f9ffe3c`，固定上游仍为 v1.4.188 / `f32ce859047a85a3ea4f507f633604dfbf596a0e`。本续批没有业务代码、依赖版本或锁文件变更。环境证据来自候选分支 `d37cde7063f0a88975017a3acbf82364bd08ca3a`，三个文档提交按序迁入本分支，原 A/B 成果不变。详见 [Windows 实际检查与失败证据](docs/WINDOWS-MANAGED-SMOKE.md)。
