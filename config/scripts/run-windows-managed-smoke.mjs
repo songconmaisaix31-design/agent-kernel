@@ -32,7 +32,18 @@ if (process.argv.includes('--print-config')) {
 if (process.argv.includes('--print-child-env')) {
   const result = spawnSync(
     process.execPath,
-    ['-e', 'process.stdout.write(JSON.stringify(process.env))'],
+    [
+      '-e',
+      `process.stdout.write(JSON.stringify({
+        systemHome: process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME,
+        profile: process.env.ORCA_USER_DATA_PATH,
+        hasCodexHome: Boolean(process.env.CODEX_HOME),
+        hasCodexSessionId: Boolean(process.env.CODEX_SESSION_ID),
+        hasElectronRunAsNode: Boolean(process.env.ELECTRON_RUN_AS_NODE),
+        hasElectronOverrideDistPath: Boolean(process.env.ELECTRON_OVERRIDE_DIST_PATH),
+        hasOrcaDevRepoRoot: Boolean(process.env.ORCA_DEV_REPO_ROOT)
+      }))`
+    ],
     { encoding: 'utf8', env: childEnv }
   )
   process.stdout.write(result.stdout)
@@ -74,8 +85,7 @@ function assertExperimentTree(homePath) {
     const current = pending.pop()
     const stats = lstatSync(current)
     if (stats.isSymbolicLink()) {
-      assertExperimentPath(realpathSync(current))
-      continue
+      throw new Error(`Experimental path contains a link: ${current}`)
     }
     if (stats.isDirectory()) {
       for (const entry of readdirSync(current, { withFileTypes: true })) {

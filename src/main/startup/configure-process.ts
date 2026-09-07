@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { getVersionManagerBinPaths } from '../codex-cli/command'
+import { getExperimentCodexHomePaths } from '../codex/codex-home-paths'
 import { getMainE2EConfig } from '../e2e-config'
 
 const DEV_PARENT_SHUTDOWN_GRACE_MS = 3000
@@ -151,6 +152,12 @@ export function patchPackagedProcessPath(): void {
 }
 
 export function configureDevUserDataPath(isDev: boolean): void {
+  const experiment = getExperimentCodexHomePaths()
+  if (experiment) {
+    // Why: configureOrcaUserDataPathEnv must retain the validated Electron profile.
+    app.setPath('userData', experiment.userDataPath)
+    return
+  }
   const e2eConfig = getMainE2EConfig()
   if (e2eConfig.userDataDir) {
     // Why: the E2E suite launches a fresh Electron app for each spec. A

@@ -253,9 +253,9 @@ import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-
 import type { CodexSessionResumePreparation } from './codex/codex-session-resume-home'
 import { prepareCodexSessionResume } from './codex/codex-session-resume-preparation'
 import {
+  assertExperimentCodexHomeConfiguration,
   getOrcaManagedCodexHomePath,
-  getSystemCodexHomePath,
-  isExperimentCodexSystemHomeEnabled
+  getSystemCodexHomePath
 } from './codex/codex-home-paths'
 import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
 import type { AgentProviderSessionMetadata } from '../shared/agent-session-resume'
@@ -1157,9 +1157,7 @@ function prepareCodexRuntimeHomeForLaunch(
 }
 
 function resolveCurrentHostCodexSessionSource(): string | undefined {
-  return isExperimentCodexSystemHomeEnabled()
-    ? getSystemCodexHomePath()
-    : resolveHostCodexSessionSourceHome(store!.getSettings())
+  return resolveHostCodexSessionSourceHome(store!.getSettings())
 }
 
 async function prepareCodexSessionResumeForLaunch(args: {
@@ -2191,6 +2189,7 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
 }
 
 void app.whenReady().then(async () => {
+  assertExperimentCodexHomeConfiguration()
   logStartupMilestone('app-ready')
   installMainThreadHangWatchdog({ userDataPath: getCanonicalUserDataPath() })
   const hangDetection = consumeHangDetectionMarker(

@@ -3,11 +3,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createSettings } from './runtime-home-settings-test-fixtures'
 import {
@@ -19,6 +21,7 @@ import {
   getRuntimeCodexHomePath,
   getSharedRuntimeAuthProvenancePath,
   getSystemCodexAuthPath,
+  getSystemCodexHomePath,
   setShellStartupEnvProbeSupportedForTest,
   setupRuntimeHomeTest,
   teardownRuntimeHomeTest,
@@ -65,6 +68,75 @@ describe('CodexRuntimeHomeService', () => {
       ).toBe(0o600)
     }
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'writes refreshed auth and promoted config only to the experimental system home',
+    async () => {
+      const labRoot = join(
+        process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
+        'OrcaKernelLab'
+      )
+      const experimentRoot = mkdtempSync(join(labRoot, 'runtime-home-writeback-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const experimentRuntimeHome = join(experimentProfile, 'codex-runtime-home', 'home')
+      const experimentAuthPath = join(experimentSystemHome, 'auth.json')
+      const experimentConfigPath = join(experimentSystemHome, 'config.toml')
+      const runtimeAuthPath = join(experimentRuntimeHome, 'auth.json')
+      const runtimeConfigPath = join(experimentRuntimeHome, 'config.toml')
+      const dailyAuthPath = getSystemCodexAuthPath()
+      const dailyConfigPath = join(getSystemCodexHomePath(), 'config.toml')
+      const originalAuth = createCodexAuthJson(
+        'experiment@example.com',
+        'acct-exp',
+        'original',
+        1_000
+      )
+      const refreshedAuth = createCodexAuthJson(
+        'experiment@example.com',
+        'acct-exp',
+        'refreshed',
+        2_000
+      )
+      const previousProfilePath = process.env.ORCA_USER_DATA_PATH
+      const previousExperimentHome = process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+      mkdirSync(experimentSystemHome, { recursive: true })
+      mkdirSync(experimentRuntimeHome, { recursive: true })
+      writeFileSync(experimentAuthPath, originalAuth, 'utf8')
+      writeFileSync(experimentConfigPath, 'model = "experiment-initial"\n', 'utf8')
+      writeFileSync(runtimeAuthPath, refreshedAuth, 'utf8')
+      writeFileSync(dailyAuthPath, 'daily-auth\n', 'utf8')
+      writeFileSync(dailyConfigPath, 'model = "daily"\n', 'utf8')
+      writeFileSync(
+        join(experimentProfile, 'codex-runtime-home', 'shared-runtime-auth-provenance.json'),
+        `${JSON.stringify({ owner: 'system-default', authJson: originalAuth })}\n`,
+        'utf8'
+      )
+      try {
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+        const service = new CodexRuntimeHomeService(createStore(createSettings()) as never)
+
+        expect(readFileSync(experimentAuthPath, 'utf8')).toBe(refreshedAuth)
+        expect(readFileSync(dailyAuthPath, 'utf8')).toBe('daily-auth\n')
+
+        service.prepareForCodexLaunch()
+        writeFileSync(runtimeConfigPath, 'model = "experiment-updated"\n', 'utf8')
+        service.prepareForCodexLaunch()
+
+        expect(readFileSync(experimentConfigPath, 'utf8')).toContain('experiment-updated')
+        expect(readFileSync(dailyConfigPath, 'utf8')).toBe('model = "daily"\n')
+      } finally {
+        if (previousProfilePath === undefined) delete process.env.ORCA_USER_DATA_PATH
+        else process.env.ORCA_USER_DATA_PATH = previousProfilePath
+        if (previousExperimentHome === undefined)
+          delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+        else process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('refuses to read runtime auth back into a duplicate account while a home is unreadable', async () => {
     if (process.platform === 'win32' || process.getuid?.() === 0) {

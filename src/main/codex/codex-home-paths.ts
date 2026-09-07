@@ -47,6 +47,24 @@ export function isExperimentCodexSystemHomeEnabled(): boolean {
   return process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV] !== undefined
 }
 
+export function getExperimentCodexHomePaths(): {
+  systemHomePath: string
+  userDataPath: string
+  managedHomePath: string
+} | null {
+  return resolveExperimentCodexHomePaths()
+}
+
+/** Validates an enabled experiment before any runtime-home side effect. */
+export function assertExperimentCodexHomeConfiguration(): void {
+  const experiment = resolveExperimentCodexHomePaths()
+  if (!experiment) {
+    return
+  }
+  assertExperimentCodexHomeTree(experiment.systemHomePath)
+  assertExperimentCodexHomeTree(experiment.managedHomePath)
+}
+
 /** Path only; use when a read-only caller must not materialize the mirror. */
 export function resolveOrcaManagedCodexHomePath(): string {
   return join(getOrcaUserDataPath(), 'codex-runtime-home', 'home')
@@ -93,7 +111,9 @@ export function syncSystemCodexResourcesIntoManagedHome(managedHomePath?: string
   assertExperimentCodexHomeTree(systemHomePath)
   assertExperimentCodexHomeTree(targetHome)
   for (const entryName of CODEX_SYSTEM_RESOURCE_ENTRIES) {
-    linkSystemCodexResource(systemHomePath, targetHome, entryName)
+    linkSystemCodexResource(systemHomePath, targetHome, entryName, {
+      preferCopy: isExperimentCodexSystemHomeEnabled()
+    })
   }
 }
 
@@ -101,6 +121,7 @@ function resolveExperimentCodexHomePaths(
   unvalidatedUserDataPath = getUnvalidatedOrcaUserDataPath()
 ): {
   systemHomePath: string
+  userDataPath: string
   managedHomePath: string
 } | null {
   const rawSystemHome = process.env[ORCA_EXPERIMENT_CODEX_SYSTEM_HOME_ENV]
@@ -124,7 +145,7 @@ function resolveExperimentCodexHomePaths(
   for (const candidate of [systemHomePath, userDataPath, managedHomePath]) {
     assertExperimentPath(candidate, experimentRoot)
   }
-  return { systemHomePath, managedHomePath }
+  return { systemHomePath, userDataPath, managedHomePath }
 }
 
 function assertExperimentCodexHomeTree(homePath: string): void {
@@ -142,8 +163,7 @@ function assertExperimentCodexHomeTree(homePath: string): void {
     const current = pending.pop()!
     const stats = lstatSync(current)
     if (stats.isSymbolicLink()) {
-      assertExperimentPath(realpathSync(current), experimentRoot)
-      continue
+      throw new Error(`Experimental Codex home contains a link: ${current}`)
     }
     if (stats.isDirectory()) {
       for (const entry of readdirSync(current, { withFileTypes: true })) {

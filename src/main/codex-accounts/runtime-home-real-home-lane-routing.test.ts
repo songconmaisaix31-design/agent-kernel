@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createSettings } from './runtime-home-settings-test-fixtures'
 import {
@@ -116,6 +125,47 @@ describe('CodexRuntimeHomeService', () => {
     expect(service.getHostCodexHomePathsForSessionDiscovery()).toEqual([getRuntimeCodexHomePath()])
     expect(existsSync(getRuntimeCodexHomePath())).toBe(true)
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects an external auth and config tree before constructor recovery writes',
+    async () => {
+      const labRoot = join(
+        process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
+        'OrcaKernelLab'
+      )
+      const experimentRoot = mkdtempSync(join(labRoot, 'runtime-home-constructor-test-'))
+      const profilePath = join(experimentRoot, 'profile')
+      const systemHomePath = join(experimentRoot, 'system-home')
+      const externalRuntimeHome = join(testState.fakeHomeDir, 'daily-runtime-home')
+      const externalAuthPath = join(externalRuntimeHome, 'auth.json')
+      const externalConfigPath = join(externalRuntimeHome, 'config.toml')
+      const previousProfilePath = process.env.ORCA_USER_DATA_PATH
+      const previousExperimentHome = process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+      mkdirSync(systemHomePath, { recursive: true })
+      mkdirSync(externalRuntimeHome, { recursive: true })
+      writeFileSync(externalAuthPath, 'daily-auth\n', 'utf8')
+      writeFileSync(externalConfigPath, 'daily-config\n', 'utf8')
+      mkdirSync(join(profilePath, 'codex-runtime-home'), { recursive: true })
+      symlinkSync(externalRuntimeHome, join(profilePath, 'codex-runtime-home', 'home'), 'junction')
+      try {
+        process.env.ORCA_USER_DATA_PATH = profilePath
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = systemHomePath
+        const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+        expect(() => new CodexRuntimeHomeService(createStore(createSettings()) as never)).toThrow(
+          'escapes OrcaKernelLab'
+        )
+        expect(readFileSync(externalAuthPath, 'utf8')).toBe('daily-auth\n')
+        expect(readFileSync(externalConfigPath, 'utf8')).toBe('daily-config\n')
+      } finally {
+        if (previousProfilePath === undefined) delete process.env.ORCA_USER_DATA_PATH
+        else process.env.ORCA_USER_DATA_PATH = previousProfilePath
+        if (previousExperimentHome === undefined)
+          delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+        else process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('routes host system default to the real home', async () => {
     const store = createStore(createSettings({ shellStartupEnvProbeSupported: true }))

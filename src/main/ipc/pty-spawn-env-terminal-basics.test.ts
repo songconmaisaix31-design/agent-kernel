@@ -244,6 +244,21 @@ describe('registerPtyHandlers', () => {
       // wrapper inherits, so the preflight must carry the CLI's verified absolute path.
       expect(env.ORCA_CODEX_LAUNCH_PREFLIGHT).toBe(BUNDLED_CLI_PATH)
     })
+    it('passes the production-selected Codex home to a real child process', async () => {
+      const env = await withBundledCli(() =>
+        spawnAndGetEnv(undefined, undefined, () => TEST_CODEX_HOME)
+      )
+      const { spawnSync: spawnRealChild } =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      const child = spawnRealChild(
+        process.execPath,
+        ['-e', 'process.stdout.write(process.env.CODEX_HOME ?? "")'],
+        { encoding: 'utf8', env }
+      )
+
+      expect(child.status).toBe(0)
+      expect(child.stdout).toBe(TEST_CODEX_HOME)
+    })
     it('skips the Codex launch preflight when the bundled CLI is not executable', async () => {
       const env = await withBundledCli(
         () => spawnAndGetEnv(undefined, undefined, () => TEST_CODEX_HOME),

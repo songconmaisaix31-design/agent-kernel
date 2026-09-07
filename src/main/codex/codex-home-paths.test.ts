@@ -185,21 +185,49 @@ describe('syncSystemCodexResourcesIntoManagedHome', () => {
   )
 
   it.skipIf(process.platform !== 'win32')(
-    'rejects experiment source links that escape the lab',
+    'rejects experiment source links before a nested link can escape the lab',
     () => {
       const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
       const experimentRoot = mkdtempSync(join(labRoot, 'codex-home-link-test-'))
       const experimentSystemHome = join(experimentRoot, 'system-home')
       const experimentProfile = join(experimentRoot, 'profile')
+      const nestedLabDir = join(experimentRoot, 'nested-lab-dir')
       const externalSkills = join(fakeHomeDir, 'external-skills')
       mkdirSync(experimentSystemHome, { recursive: true })
       mkdirSync(experimentProfile, { recursive: true })
+      mkdirSync(nestedLabDir, { recursive: true })
       mkdirSync(externalSkills, { recursive: true })
       try {
-        symlinkSync(externalSkills, join(experimentSystemHome, 'skills'), 'junction')
+        symlinkSync(nestedLabDir, join(experimentSystemHome, 'skills'), 'junction')
+        symlinkSync(externalSkills, join(nestedLabDir, 'outside'), 'junction')
         process.env.ORCA_USER_DATA_PATH = experimentProfile
         process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
-        expect(() => syncSystemCodexResourcesIntoManagedHome()).toThrow('escapes OrcaKernelLab')
+        expect(() => syncSystemCodexResourcesIntoManagedHome()).toThrow('contains a link')
+      } finally {
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'copies experiment resources so the next preparation does not reject its own output',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-home-copy-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const systemSkillsPath = join(experimentSystemHome, 'skills')
+      const runtimeSkillsPath = join(experimentProfile, 'codex-runtime-home', 'home', 'skills')
+      mkdirSync(systemSkillsPath, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      writeFileSync(join(systemSkillsPath, 'experiment.md'), 'experiment\n', 'utf8')
+      try {
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        syncSystemCodexResourcesIntoManagedHome()
+        syncSystemCodexResourcesIntoManagedHome()
+        expect(lstatSync(runtimeSkillsPath).isSymbolicLink()).toBe(false)
+        expect(readFileSync(join(runtimeSkillsPath, 'experiment.md'), 'utf8')).toBe('experiment\n')
       } finally {
         rmSync(experimentRoot, { recursive: true, force: true })
       }

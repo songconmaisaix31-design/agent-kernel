@@ -40,6 +40,7 @@ import {
   writeFileAtomicallyIfUnchanged
 } from './fs-utils'
 import {
+  assertExperimentCodexHomeConfiguration,
   getOrcaManagedCodexHomePath,
   getOrcaUserDataPath,
   isExperimentCodexSystemHomeEnabled,
@@ -209,6 +210,7 @@ export class CodexRuntimeHomeService {
   private pendingHostSystemDefaultSessionMigrationTarget: string | null = null
 
   constructor(private readonly store: Store) {
+    assertExperimentCodexHomeConfiguration()
     this.safeRecoverInterruptedRuntimeAuthOperation()
     this.safeMigrateLegacySharedAuth()
     this.safeMigrateLegacyManagedState()
@@ -696,9 +698,7 @@ export class CodexRuntimeHomeService {
   }
 
   private getHostSessionSourceHome(): string | undefined {
-    return isExperimentCodexSystemHomeEnabled()
-      ? getSystemCodexHomePath()
-      : resolveHostCodexSessionSourceHome(this.store.getSettings())
+    return resolveHostCodexSessionSourceHome(this.store.getSettings())
   }
 
   reconcileLegacySharedHomeForRetainedPanes(): void {
