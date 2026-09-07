@@ -1,5 +1,27 @@
 # 当前窄批次：批准正文与真实独立 Worker 冒烟（2026-09-07）
 
+## 22:08 续批：候选 CLI 接线与原生协调会话
+
+用户局部批准修复冒烟启动器遗漏的开发 CLI 准备与调用接线，复用原生 Agent 创建和凭据传递；不扩大服务层功能。当前同一标准执行者负责实现、针对回归和实验操作，总控审关键差异与结果，A/B 保留且不唤醒。保留旧空 Run/Task 和停止的普通 shell；它没有原生 Agent 身份，不能凭句柄配置 Kernel。若正常恢复不适用，仅允许一次替代测试 Run。真实任务继续使用原一次性仓库及外置验收，协调会话与 Worker 用量均计入；完成与独立停止分别验收。
+
+22:43 实际交付：候选源码 `7bf194e38ea721d06d9d37f1e451c2f653aa817e`、`14f6a05ac84f53bb5add71d6389383361478fd26` 已 push，文档 HEAD `2b0ba4238c209c3cd2272c514bf1ef54d016ceb2`。正式分支按来源顺序接纳为 `952b3f3e7e22bcb826544288ec6f8d72d177e412`、`4468d5e6c3dae096887872434a71850ddd49b104`，随后接纳两项文档提交。修复复用 prepareDevCliTerminalWrappers，在清除继承身份后重建候选 repo/profile/Electron/CLI 绑定，Windows 环境名大小写处理并只保留一个 Path；诊断入口恢复只读，不改全局 CLI。固定上游仍为 v1.4.188 / `f32ce859047a85a3ea4f507f633604dfbf596a0e`，Electron 43.1.0 win32-x64。
+
+实际验证：候选 `pnpm exec vitest run config/scripts/run-windows-managed-smoke.test.mjs config/scripts/dev-cli-terminal-wrapper.test.mjs` 在 22:42 再核验为 2 文件、4 条通过；执行者已运行 typecheck:node 与 build:cli。真实 PowerShell 诊断子进程的 Get-Command orca 指向实验 profile/cli/bin/orca.cmd，repo/profile/runtime 准确绑定、Path 键唯一。这仍是启动器子进程证据，**不是新候选终端内的路由验收**。已有 37 条分散测试不覆盖新增完整身份链路；新增连接草案失败，发现 ORCA_TERMINAL_HANDLE 由后续生产 PTY 层注入，不能仅取 createTerminal 中间 env，也不能手写成功 proof。草案未收录为通过测试；该回归缺口保留。
+
+启动异常核实：三份 resources/skills 输入 current-manifest.json、snapshot-registry.json、release-mapping.json 均从固定 HEAD 补齐，无资源 diff。原错误来自已停止候选；hook ledger/provenance 的实际目标位于实验 managed home，skills discovery 为只读库存扫描，没有据此认定日常写入或扩权限。原 non-check-only 误调用及未知退出码仍保留，本轮未重跑安装入口。
+
+当前精确阻塞：同一 terra 会话一次恢复后，在已授权的 Start-Process 启动专用候选命令处进入交互确认。Orca CLI 对普通提示及单次 y 都返回 `agent_prompt_blocked`，尚未执行该启动命令；未绕开交互保护。用户需在原候选执行者终端为这一条已授权启动选择一次 Yes, proceed，不需要重新授权项目。等待界面和原会话保留。旧 Run/Task 未变，替代 Run=0、新原生协调会话=0、Worker/Dispatch=0、Kernel 配置未持久化，目标文件与任务提交未产生；正常完成与独立短停止均未验收。未计入 12 次正式对照。尚不能交付候选新终端路由或真实 Agent 配置成功证据。
+
+本段用量由 22:08 用户消息前最近计数作起点；以下为客户端增量，缓存包含于输入、推理包含于输出，不等于费用或免费账户 Worker 消耗。原执行者的中断式续送触发退出后，用同一 session ID、terra/medium 正常恢复一次，计数重置单列；未新建实施 Agent 或唤醒 A/B。实验协调者/Worker 均未启动，无本批实际模型用量记录。
+
+| 会话区段 | 输入 | 缓存输入 | 输出 | 推理输出 | total | 截止北京时间 |
+|---|---:|---:|---:|---:|---:|---|
+| 总控 astra/high | 9,218,280 | 9,096,576 | 23,759 | 4,931 | 9,242,039 | 22:42:48 |
+| 同一 terra/medium 恢复前 | 8,944,551 | 8,845,056 | 15,213 | 4,276 | 8,959,764 | 22:22:50 |
+| 同一 terra/medium 恢复后，计数重置 1 次 | 7,268,488 | 7,062,528 | 16,059 | 5,519 | 7,284,547 | 22:38:34 |
+
+实验 native-run/cli-binding-usage-start.json、cli-binding-usage-end.json、cli-binding-usage-segments.json 保留原计数与分段；初次起点比较的时区问题已在后续动作前纠正，以上以 DateTimeOffset 比较的 segments 为准。快照后的记录与回复未包含。以下旧批失败及状态保留为时间点历史。
+
 ## 21:46 免费实验账户最小链路：登录成功，受管派发前拒绝
 
 本轮仅链路验证，没有项目源码改动、依赖安装、CURRENT 变更或正式对照。保留 Windows 候选 `f3f675d`、runtime `e61c400d-a1ca-438c-8c9e-1835c65c6494`。实验 home 的官方登录返回 `Logged in using ChatGPT`，候选账户 `oauth/hasAuth=true`，额度状态 `ok`，300 分钟窗口用量 0%，没有切账号/API/充值或复制认证。
