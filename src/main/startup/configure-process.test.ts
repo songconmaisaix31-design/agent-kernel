@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -170,6 +170,35 @@ describe('patchPackagedProcessPath', () => {
 })
 
 describe('configureDevUserDataPath', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'keeps an approved experiment profile through Electron userData canonicalization',
+    async () => {
+      const { app } = await import('electron')
+      const { configureDevUserDataPath, configureOrcaUserDataPathEnv } =
+        await import('./configure-process')
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'configure-experiment-test-'))
+      const systemHome = join(experimentRoot, 'system-home')
+      const profile = join(experimentRoot, 'profile')
+      const originalSystemHome = process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+      const originalProfile = process.env.ORCA_USER_DATA_PATH
+      mkdirSync(systemHome, { recursive: true })
+      mkdirSync(profile, { recursive: true })
+      try {
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = systemHome
+        process.env.ORCA_USER_DATA_PATH = profile
+        configureDevUserDataPath(false)
+        configureOrcaUserDataPathEnv()
+        expect(app.getPath('userData')).toBe(profile)
+        expect(process.env.ORCA_USER_DATA_PATH).toBe(profile)
+      } finally {
+        restoreEnv('ORCA_EXPERIMENT_CODEX_SYSTEM_HOME', originalSystemHome)
+        restoreEnv('ORCA_USER_DATA_PATH', originalProfile)
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('forces Electron home into the disposable E2E profile', async () => {
     const { app } = await import('electron')
     const { configureDevUserDataPath } = await import('./configure-process')

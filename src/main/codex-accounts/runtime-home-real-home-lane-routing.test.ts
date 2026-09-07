@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createSettings } from './runtime-home-settings-test-fixtures'
 import {
@@ -117,6 +126,47 @@ describe('CodexRuntimeHomeService', () => {
     expect(existsSync(getRuntimeCodexHomePath())).toBe(true)
   })
 
+  it.skipIf(process.platform !== 'win32')(
+    'rejects an external auth and config tree before constructor recovery writes',
+    async () => {
+      const labRoot = join(
+        process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
+        'OrcaKernelLab'
+      )
+      const experimentRoot = mkdtempSync(join(labRoot, 'runtime-home-constructor-test-'))
+      const profilePath = join(experimentRoot, 'profile')
+      const systemHomePath = join(experimentRoot, 'system-home')
+      const externalRuntimeHome = join(testState.fakeHomeDir, 'daily-runtime-home')
+      const externalAuthPath = join(externalRuntimeHome, 'auth.json')
+      const externalConfigPath = join(externalRuntimeHome, 'config.toml')
+      const previousProfilePath = process.env.ORCA_USER_DATA_PATH
+      const previousExperimentHome = process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+      mkdirSync(systemHomePath, { recursive: true })
+      mkdirSync(externalRuntimeHome, { recursive: true })
+      writeFileSync(externalAuthPath, 'daily-auth\n', 'utf8')
+      writeFileSync(externalConfigPath, 'daily-config\n', 'utf8')
+      mkdirSync(join(profilePath, 'codex-runtime-home'), { recursive: true })
+      symlinkSync(externalRuntimeHome, join(profilePath, 'codex-runtime-home', 'home'), 'junction')
+      try {
+        process.env.ORCA_USER_DATA_PATH = profilePath
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = systemHomePath
+        const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+        expect(() => new CodexRuntimeHomeService(createStore(createSettings()) as never)).toThrow(
+          'escapes OrcaKernelLab'
+        )
+        expect(readFileSync(externalAuthPath, 'utf8')).toBe('daily-auth\n')
+        expect(readFileSync(externalConfigPath, 'utf8')).toBe('daily-config\n')
+      } finally {
+        if (previousProfilePath === undefined) {delete process.env.ORCA_USER_DATA_PATH}
+        else {process.env.ORCA_USER_DATA_PATH = previousProfilePath}
+        if (previousExperimentHome === undefined)
+          {delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME}
+        else {process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentHome}
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('routes host system default to the real home', async () => {
     const store = createStore(createSettings({ shellStartupEnvProbeSupported: true }))
     const { CodexRuntimeHomeService } = await import('./runtime-home-service')
@@ -205,6 +255,60 @@ describe('CodexRuntimeHomeService', () => {
       }
     }
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'confines the managed lane, config, and auth to the experiment source',
+    async () => {
+      const previousLocalAppData = process.env.LOCALAPPDATA
+      const previousUserDataPath = process.env.ORCA_USER_DATA_PATH
+      const previousSystemHome = process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+      const labRoot = join(testState.fakeHomeDir, 'OrcaKernelLab')
+      const systemHome = join(labRoot, 'body-smoke-20260907', 'native-run', 'system-home')
+      const profile = join(labRoot, 'body-smoke-20260907', 'native-run', 'profile')
+      const dailyHome = join(testState.fakeHomeDir, '.codex')
+      mkdirSync(systemHome, { recursive: true })
+      mkdirSync(profile, { recursive: true })
+      writeFileSync(
+        join(systemHome, 'auth.json'),
+        createCodexAuthJson('exp@example.com', 'exp', 'exp-token')
+      )
+      writeFileSync(join(systemHome, 'config.toml'), 'model = "experiment"\n')
+      writeFileSync(
+        join(dailyHome, 'auth.json'),
+        createCodexAuthJson('daily@example.com', 'daily', 'daily-token')
+      )
+      writeFileSync(join(dailyHome, 'config.toml'), 'model = "daily"\n')
+      process.env.LOCALAPPDATA = testState.fakeHomeDir
+      process.env.ORCA_USER_DATA_PATH = profile
+      process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = systemHome
+      try {
+        const store = createStore(createSettings({ shellStartupEnvProbeSupported: true }))
+        const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+        const service = new CodexRuntimeHomeService(store as never)
+        const runtimeHome = join(profile, 'codex-runtime-home', 'home')
+        expect(service.isHostSystemDefaultRealHome()).toBe(false)
+        expect(service.prepareForCodexLaunch(undefined, { CODEX_HOME: dailyHome })).toBe(
+          runtimeHome
+        )
+        expect(readFileSync(join(runtimeHome, 'auth.json'), 'utf-8')).toContain(
+          '"account_id":"exp"'
+        )
+        expect(readFileSync(join(runtimeHome, 'config.toml'), 'utf-8')).toContain('experiment')
+        expect(readFileSync(join(dailyHome, 'auth.json'), 'utf-8')).toContain(
+          '"account_id":"daily"'
+        )
+        expect(readFileSync(join(dailyHome, 'config.toml'), 'utf-8')).toContain('daily')
+      } finally {
+        if (previousLocalAppData === undefined) {delete process.env.LOCALAPPDATA}
+        else {process.env.LOCALAPPDATA = previousLocalAppData}
+        if (previousUserDataPath === undefined) {delete process.env.ORCA_USER_DATA_PATH}
+        else {process.env.ORCA_USER_DATA_PATH = previousUserDataPath}
+        if (previousSystemHome === undefined) {delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME}
+        else {process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousSystemHome}
+        rmSync(labRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('seeds shared auth for a pane-local custom home on the real-home lane', async () => {
     const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system-token')

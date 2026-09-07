@@ -40,8 +40,10 @@ import {
   writeFileAtomicallyIfUnchanged
 } from './fs-utils'
 import {
+  assertExperimentCodexHomeConfiguration,
   getOrcaManagedCodexHomePath,
   getOrcaUserDataPath,
+  isExperimentCodexSystemHomeEnabled,
   getSystemCodexHomePath,
   resolveOrcaManagedCodexHomePath,
   syncCodexGlobalInstructionsIntoManagedHome,
@@ -208,6 +210,7 @@ export class CodexRuntimeHomeService {
   private pendingHostSystemDefaultSessionMigrationTarget: string | null = null
 
   constructor(private readonly store: Store) {
+    assertExperimentCodexHomeConfiguration()
     this.safeRecoverInterruptedRuntimeAuthOperation()
     this.safeMigrateLegacySharedAuth()
     this.safeMigrateLegacyManagedState()
@@ -239,6 +242,9 @@ export class CodexRuntimeHomeService {
     launchEnv?: NodeJS.ProcessEnv,
     options?: { unavailableManagedHomePath?: string }
   ): string | null {
+    if (isExperimentCodexSystemHomeEnabled()) {
+      getSystemCodexHomePath()
+    }
     if (target?.runtime === 'wsl') {
       const wslTarget = this.resolveWslDefaultTarget(target)
       const syncedRuntimeHomePath = this.syncWslRuntimeForCurrentSelection(wslTarget)
@@ -271,10 +277,7 @@ export class CodexRuntimeHomeService {
     syncSystemCodexResourcesIntoManagedHome()
     syncSystemConfigIntoManagedCodexHome()
     // Why: sessions can be large; bridge them after launch so starting a fresh TUI never waits on a full tree walk.
-    void startSystemCodexSessionBridgeInBackground(
-      {},
-      resolveHostCodexSessionSourceHome(this.store.getSettings())
-    )
+    void startSystemCodexSessionBridgeInBackground({}, this.getHostSessionSourceHome())
     return this.getRuntimeHomePath()
   }
 
@@ -305,9 +308,7 @@ export class CodexRuntimeHomeService {
   }
 
   prepareHostSystemDefaultSessionMigrationPass(): boolean {
-    const paths = resolveCodexSessionBackfillPaths(
-      resolveHostCodexSessionSourceHome(this.store.getSettings())
-    )
+    const paths = resolveCodexSessionBackfillPaths(this.getHostSessionSourceHome())
     if (
       this.hostSystemDefaultSessionMigrationPending &&
       this.pendingHostSystemDefaultSessionMigrationTarget !== paths.systemSessionsRoot
@@ -420,7 +421,7 @@ export class CodexRuntimeHomeService {
     return [
       // Why: history-only override lets custom-CODEX_HOME users bridge from the
       // home they actually record sessions in; falls back to the real ~/.codex.
-      resolveHostCodexSessionSourceHome(this.store.getSettings()) ?? getSystemCodexHomePath(),
+      this.getHostSessionSourceHome() ?? getSystemCodexHomePath(),
       // Why: path only — a per-account install must not materialize the mirror.
       resolveOrcaManagedCodexHomePath(),
       ...this.getManagedHostAccountHomesForSessionDiscovery()
@@ -520,9 +521,7 @@ export class CodexRuntimeHomeService {
       return null
     }
     if (!this.hostSystemDefaultSessionMigrationPending) {
-      const paths = resolveCodexSessionBackfillPaths(
-        resolveHostCodexSessionSourceHome(this.store.getSettings())
-      )
+      const paths = resolveCodexSessionBackfillPaths(this.getHostSessionSourceHome())
       this.pendingHostSystemDefaultSessionMigrationNeedsFullScan =
         !hasCompletedCodexSessionBackfillMarker(paths.markerPath, paths.systemSessionsRoot)
       this.pendingHostSystemDefaultSessionMigrationTarget = paths.systemSessionsRoot
@@ -692,7 +691,14 @@ export class CodexRuntimeHomeService {
   }
 
   isHostSystemDefaultRealHome(launchEnv?: NodeJS.ProcessEnv): boolean {
+    if (isExperimentCodexSystemHomeEnabled()) {
+      return false
+    }
     return this.isHostSystemDefaultRealHomeSelected(launchEnv) && this.realHomeLaneGate()
+  }
+
+  private getHostSessionSourceHome(): string | undefined {
+    return resolveHostCodexSessionSourceHome(this.store.getSettings())
   }
 
   reconcileLegacySharedHomeForRetainedPanes(): void {
@@ -763,6 +769,9 @@ export class CodexRuntimeHomeService {
   // A skipped poll needs its own channel or the fetcher silently retargets the
   // user's real ~/.codex (#STA-4422).
   prepareForRateLimitFetch(target?: CodexAccountSelectionTarget): CodexRateLimitHomeResolution {
+    if (isExperimentCodexSystemHomeEnabled()) {
+      getSystemCodexHomePath()
+    }
     if (target?.runtime === 'wsl') {
       const wslTarget = this.resolveWslDefaultTarget(target)
       const syncedRuntimeHomePath = this.getPreparedWslRateLimitHomePath(wslTarget)

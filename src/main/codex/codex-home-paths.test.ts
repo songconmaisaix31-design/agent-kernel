@@ -24,6 +24,7 @@ const { fsMockState } = vi.hoisted(() => ({
   fsMockState: {
     copyCount: 0,
     failSymlink: false,
+    unreadablePath: null as string | null,
     trackedReadCount: 0,
     trackedReadPath: null as string | null
   }
@@ -48,6 +49,14 @@ vi.mock('node:fs', async () => {
         throw new Error('symlink disabled for test')
       }
       return actual.symlinkSync(...args)
+    },
+    lstatSync: (...args: Parameters<typeof actual.lstatSync>) => {
+      if (args[0] === fsMockState.unreadablePath) {
+        const error = new Error('access denied') as NodeJS.ErrnoException
+        error.code = 'EACCES'
+        throw error
+      }
+      return actual.lstatSync(...args)
     }
   }
 })
@@ -67,6 +76,9 @@ vi.mock('node:os', async () => {
 })
 
 import {
+  assertExperimentCodexHomeConfiguration,
+  getSystemCodexHomePath as getResolvedSystemCodexHomePath,
+  isExperimentCodexSystemHomeEnabled,
   syncCodexGlobalInstructionsIntoManagedHome,
   syncSystemCodexResourcesIntoManagedHome
 } from './codex-home-paths'
@@ -74,6 +86,7 @@ import {
 let fakeHomeDir: string
 let userDataDir: string
 let previousUserDataPath: string | undefined
+let previousExperimentSystemHome: string | undefined
 
 function getSystemCodexHomePath(): string {
   return join(fakeHomeDir, '.codex')
@@ -108,11 +121,14 @@ beforeEach(() => {
   mockElectronAppPaths()
   fsMockState.copyCount = 0
   fsMockState.failSymlink = false
+  fsMockState.unreadablePath = null
   fsMockState.trackedReadCount = 0
   fsMockState.trackedReadPath = null
   fakeHomeDir = mkdtempSync(join(tmpdir(), 'orca-codex-resource-home-'))
   userDataDir = mkdtempSync(join(tmpdir(), 'orca-codex-resource-user-data-'))
   previousUserDataPath = process.env.ORCA_USER_DATA_PATH
+  previousExperimentSystemHome = process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+  delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
   process.env.ORCA_USER_DATA_PATH = userDataDir
   homedirMock.mockReturnValue(fakeHomeDir)
   getPathMock.mockImplementation((name: string) => {
@@ -132,10 +148,138 @@ afterEach(() => {
   } else {
     process.env.ORCA_USER_DATA_PATH = previousUserDataPath
   }
+  if (previousExperimentSystemHome === undefined) {
+    delete process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME
+  } else {
+    process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = previousExperimentSystemHome
+  }
   vi.clearAllMocks()
 })
 
 describe('syncSystemCodexResourcesIntoManagedHome', () => {
+  it('keeps the default system home when the experiment source is disabled', () => {
+    expect(isExperimentCodexSystemHomeEnabled()).toBe(false)
+    expect(getResolvedSystemCodexHomePath()).toBe(getSystemCodexHomePath())
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'uses an OrcaKernelLab experiment source and rejects an external source before writes',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-home-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const externalHome = join(fakeHomeDir, '.codex')
+      mkdirSync(experimentSystemHome, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      try {
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        expect(getResolvedSystemCodexHomePath()).toBe(experimentSystemHome)
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = externalHome
+        expect(() => getResolvedSystemCodexHomePath()).toThrow('escapes OrcaKernelLab')
+        expect(existsSync(join(externalHome, 'auth.json'))).toBe(false)
+      } finally {
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects experiment source links before a nested link can escape the lab',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-home-link-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const nestedLabDir = join(experimentRoot, 'nested-lab-dir')
+      const externalSkills = join(fakeHomeDir, 'external-skills')
+      mkdirSync(experimentSystemHome, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      mkdirSync(nestedLabDir, { recursive: true })
+      mkdirSync(externalSkills, { recursive: true })
+      try {
+        symlinkSync(nestedLabDir, join(experimentSystemHome, 'skills'), 'junction')
+        symlinkSync(externalSkills, join(nestedLabDir, 'outside'), 'junction')
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        expect(() => syncSystemCodexResourcesIntoManagedHome()).toThrow('contains a link')
+      } finally {
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'copies experiment resources so the next preparation does not reject its own output',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-home-copy-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const systemSkillsPath = join(experimentSystemHome, 'skills')
+      const runtimeSkillsPath = join(experimentProfile, 'codex-runtime-home', 'home', 'skills')
+      mkdirSync(systemSkillsPath, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      writeFileSync(join(systemSkillsPath, 'experiment.md'), 'experiment\n', 'utf8')
+      try {
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        syncSystemCodexResourcesIntoManagedHome()
+        syncSystemCodexResourcesIntoManagedHome()
+        expect(lstatSync(runtimeSkillsPath).isSymbolicLink()).toBe(false)
+        expect(readFileSync(join(runtimeSkillsPath, 'experiment.md'), 'utf8')).toBe('experiment\n')
+      } finally {
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'rejects an external profile resource before the managed home is materialized',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-profile-link-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      const externalSessionPath = join(fakeHomeDir, 'daily-session-data')
+      mkdirSync(experimentSystemHome, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      mkdirSync(externalSessionPath, { recursive: true })
+      try {
+        symlinkSync(externalSessionPath, join(experimentProfile, 'session-data'), 'junction')
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        expect(() => assertExperimentCodexHomeConfiguration()).toThrow('contains a link')
+        expect(existsSync(join(experimentProfile, 'codex-runtime-home'))).toBe(false)
+      } finally {
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'fails closed when the experiment source is unreadable',
+    () => {
+      const labRoot = join(process.env.LOCALAPPDATA!, 'OrcaKernelLab')
+      const experimentRoot = mkdtempSync(join(labRoot, 'codex-home-access-test-'))
+      const experimentSystemHome = join(experimentRoot, 'system-home')
+      const experimentProfile = join(experimentRoot, 'profile')
+      mkdirSync(experimentSystemHome, { recursive: true })
+      mkdirSync(experimentProfile, { recursive: true })
+      try {
+        process.env.ORCA_USER_DATA_PATH = experimentProfile
+        process.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = experimentSystemHome
+        fsMockState.unreadablePath = experimentSystemHome
+        expect(() => getResolvedSystemCodexHomePath()).toThrow('access denied')
+        expect(existsSync(join(experimentProfile, 'codex-runtime-home'))).toBe(false)
+      } finally {
+        fsMockState.unreadablePath = null
+        rmSync(experimentRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('uses ORCA_USER_DATA_PATH when Electron cannot be required', async () => {
     vi.resetModules()
     vi.doMock('electron', () => {

@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
@@ -9,20 +12,41 @@ import { OrchestrationDb } from '../../orchestration/db'
 import type { Plan } from '../../orchestration/kernel-plan'
 import type { RpcContext } from '../core'
 import { ORCHESTRATION_METHODS } from './orchestration'
-
+type CliRunUseInput = {
+  flags: Map<string, string | boolean>
+  client: { call: (name: string, input: Record<string, unknown>) => Promise<{ result: unknown }> }
+  cwd: string
+  json: boolean
+}
+type CliRunUseHandler = (input: CliRunUseInput) => Promise<void>
 // Real registered handlers and SQLite; only terminal, resource and caller-environment observations are replaced.
 describe('Kernel service admission', () => {
   const pane = 'tab_coord:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const workerPane = 'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   const proof = { terminalHandle: 'term_coord', paneKey: pane, launchToken: 'kernel-test-proof' }
+  const workerProof = {
+    terminalHandle: 'term_worker',
+    paneKey: workerPane,
+    launchToken: 'worker-proof'
+  }
+  const workerStartInput = {
+    from: 'term_coord',
+    worktree: 'new-top-level',
+    name: 'worker',
+    agent: 'codex'
+  }
   let db: OrchestrationDb
   let runtime: OrcaRuntimeService
   let ctx: RpcContext
-  let runId: string
-  let taskId: string
+  let runId: string, taskId: string
   let plan: Plan
-
-  beforeEach(() => {
+  let runUseHandler: CliRunUseHandler
+  beforeEach(async () => {
+    runUseHandler = (
+      await vi.importActual<{ ORCHESTRATION_HANDLERS: Record<string, CliRunUseHandler> }>(
+        '../../../../cli/handlers/orchestration'
+      )
+    ).ORCHESTRATION_HANDLERS['orchestration run-use']
     db = new OrchestrationDb(':memory:')
     runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
@@ -120,12 +144,10 @@ describe('Kernel service admission', () => {
       new Error('Unexpected remote call')
     )
   })
-
   afterEach(() => {
     db.close()
     vi.restoreAllMocks()
   })
-
   async function call(
     name: string,
     input: Record<string, unknown>,
@@ -134,7 +156,6 @@ describe('Kernel service admission', () => {
     const method = ORCHESTRATION_METHODS.find((candidate) => candidate.name === name)!
     return method.handler(method.params!.parse(input), context)
   }
-
   function configure(kernel: unknown = { repoId: 'repo', plan }, context = ctx) {
     return call('orchestration.runUse', { id: runId, from: 'term_coord', kernel }, context)
   }
@@ -142,18 +163,38 @@ describe('Kernel service admission', () => {
   function start(overrides: Record<string, unknown> = {}, context = ctx) {
     return call(
       'orchestration.workerStart',
-      {
-        task: taskId,
-        from: 'term_coord',
-        worktree: 'new-top-level',
-        name: 'worker',
-        agent: 'codex',
-        ...overrides
-      },
+      { task: taskId, ...workerStartInput, ...overrides },
       context
     )
   }
-
+  function useRun(evidence = proof) {
+    const input = { id: runId, from: evidence.terminalHandle }
+    const context = { runtime, orchestrationCompatibilityEvidence: evidence }
+    return call('orchestration.runUse', input, context)
+  }
+  function dispatch(overrides: Record<string, unknown> = {}, context = ctx) {
+    const input = { task: taskId, run: runId, from: 'term_coord', to: 'term_worker' }
+    return call('orchestration.dispatch', { ...input, ...overrides }, context)
+  }
+  function reserveStartingDispatch() {
+    return db.createStartingWorkerDispatch({
+      taskId,
+      startOptions: {},
+      expectedKernelConfig: db.getRun(runId)!.kernel_config
+    })
+  }
+  function reset(scope: string) {
+    return call('orchestration.reset', { [scope]: true }, { runtime })
+  }
+  function startMutation(callerFingerprint: string, requestId: string, payloadHash: string) {
+    return { callerFingerprint, requestId, method: 'orchestration.workerStart', payloadHash }
+  }
+  function duringPreparation(effect: () => unknown) {
+    vi.mocked(runtime.showTerminal).mockImplementation(async () => {
+      await effect()
+      return { handle: 'term_coord', worktreeId: 'repo::parent' } as never
+    })
+  }
   function expectNoEffects() {
     expect(runtime.createManagedWorktree).not.toHaveBeenCalled()
     expect(runtime.createTerminal).not.toHaveBeenCalled()
@@ -161,6 +202,76 @@ describe('Kernel service admission', () => {
     expect(runtime.callOrchestrationWorkerServer).not.toHaveBeenCalled()
     expect(db.getDispatchContext(taskId)).toBeUndefined()
   }
+
+  async function runUseFromCli(
+    config: unknown,
+    options: { off?: boolean; omitKernel?: boolean } = {}
+  ): Promise<void> {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-kernel-cli-'))
+    const path = join(directory, 'kernel.json')
+    try {
+      if (!options.off && !options.omitKernel) {
+        await writeFile(path, JSON.stringify(config))
+      }
+      const flags = new Map<string, string | boolean>([
+        ['id', runId],
+        ['from', 'term_coord']
+      ])
+      if (!options.omitKernel) {
+        flags.set(options.off ? 'kernel-off' : 'kernel-config', options.off || path)
+      }
+      await runUseHandler({
+        flags,
+        client: {
+          call: async (name: string, input: Record<string, unknown>) => ({
+            result: await call(name, input)
+          })
+        },
+        cwd: '/test/repo',
+        json: true
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+
+  it('configures through the CLI and confirms server-owned defaults in SQLite', async () => {
+    await runUseFromCli({ repoId: 'repo', plan, limits: { maxAttempts: 4 } })
+    expect(JSON.parse(db.getRun(runId)!.kernel_config!)).toMatchObject({
+      repoId: 'repo',
+      plan,
+      owner: { terminalHandle: 'term_coord', paneKey: pane },
+      limits: { maxAttempts: 4, maxConcurrentWorkers: 2, maxAttemptsPerTask: 2 }
+    })
+    expectNoEffects()
+  })
+
+  it('keeps the prior CLI configuration after an invalid plan without resource effects', async () => {
+    await runUseFromCli({ repoId: 'repo', plan })
+    const original = db.getRun(runId)!.kernel_config
+    await expect(
+      runUseFromCli({ repoId: 'repo', plan: { ...plan, schemaVersion: 2 } })
+    ).rejects.toMatchObject({ code: 'kernel_plan_invalid' })
+    expect(db.getRun(runId)?.kernel_config).toBe(original)
+    expectNoEffects()
+  })
+
+  it('disables through the CLI and restores native worker startup', async () => {
+    await runUseFromCli({ repoId: 'repo', plan })
+    await runUseFromCli(undefined, { off: true })
+    expect(db.getRun(runId)?.kernel_config).toBeNull()
+    expect(await start({ worktree: 'current', name: undefined }, { runtime })).toMatchObject({
+      state: 'ready'
+    })
+  })
+
+  it('keeps persisted configuration unchanged when CLI Kernel flags are omitted', async () => {
+    await runUseFromCli({ repoId: 'repo', plan })
+    const original = db.getRun(runId)!.kernel_config
+    await runUseFromCli(undefined, { omitKernel: true })
+    expect(db.getRun(runId)?.kernel_config).toBe(original)
+    expectNoEffects()
+  })
 
   it('persists an approved plan through runUse and enters the native Worker lifecycle', async () => {
     await configure()
@@ -229,12 +340,7 @@ describe('Kernel service admission', () => {
   it('requires approved task body before Dispatch or resource creation for an old plan', async () => {
     delete plan.tasks[0].spec
     await configure()
-    const mutation = {
-      callerFingerprint: 'body-test',
-      requestId: 'body-required',
-      method: 'orchestration.workerStart',
-      payloadHash: 'body-test'
-    }
+    const mutation = startMutation('body-test', 'body-required', 'body-test')
     await expect(start({}, { ...ctx, orchestrationMutation: mutation })).rejects.toMatchObject({
       code: 'kernel_task_body_required',
       message: expect.stringMatching(/body.*re-approve/i)
@@ -314,7 +420,7 @@ describe('Kernel service admission', () => {
     expect(db.getRun(runId)?.coordinator_handle).toBeNull()
     expect(db.getRun(runId)!.consumer_generation).toBeGreaterThan(originalGeneration)
     const switchedGeneration = db.getRun(runId)!.consumer_generation
-    await call('orchestration.runUse', { id: runId, from: 'term_coord' })
+    await useRun()
     expect(db.getCurrentRunForPane(pane)?.id).toBe(runId)
     expect(db.getRun(runId)!.consumer_generation).toBeGreaterThan(switchedGeneration)
     expect(await start()).toMatchObject({ state: 'ready' })
@@ -330,9 +436,7 @@ describe('Kernel service admission', () => {
         .run(runId)
       return original(input)
     })
-    await expect(
-      call('orchestration.runUse', { id: runId, from: 'term_coord' })
-    ).rejects.toMatchObject({ code: 'consumer_fenced' })
+    await expect(useRun()).rejects.toMatchObject({ code: 'consumer_fenced' })
     expect(db.bindRun).toHaveBeenCalledOnce()
     expect(db.getRun(runId)?.coordinator_handle).toBeNull()
     expectNoEffects()
@@ -363,15 +467,13 @@ describe('Kernel service admission', () => {
           .run('term_worker', workerPane, runId)
       }
       if (mode === 'unique') {
-        await call('orchestration.runUse', { id: runId, from: 'term_coord' })
+        await useRun()
         expect(JSON.parse(db.getRun(runId)!.kernel_config!).owner).toEqual({
           terminalHandle: 'term_coord',
           paneKey: pane
         })
       } else {
-        await expect(
-          call('orchestration.runUse', { id: runId, from: 'term_coord' })
-        ).rejects.toThrow()
+        await expect(useRun()).rejects.toThrow()
         expectNoEffects()
       }
     }
@@ -380,20 +482,7 @@ describe('Kernel service admission', () => {
   it('rejects a Worker restoring an unbound managed Run with its own valid proof', async () => {
     await configure()
     await call('orchestration.runCreate', { objective: 'Other work', from: 'term_coord' })
-    await expect(
-      call(
-        'orchestration.runUse',
-        { id: runId, from: 'term_worker' },
-        {
-          runtime,
-          orchestrationCompatibilityEvidence: {
-            terminalHandle: 'term_worker',
-            paneKey: workerPane,
-            launchToken: 'worker-proof'
-          }
-        }
-      )
-    ).rejects.toMatchObject({ code: 'consumer_fenced' })
+    await expect(useRun(workerProof)).rejects.toMatchObject({ code: 'consumer_fenced' })
     expect(db.getRun(runId)?.coordinator_handle).toBeNull()
     expectNoEffects()
   })
@@ -411,20 +500,7 @@ describe('Kernel service admission', () => {
 
   it('prevents a Worker from taking over a managed Run by omitting kernel', async () => {
     await configure()
-    await expect(
-      call(
-        'orchestration.runUse',
-        { id: runId, from: 'term_worker' },
-        {
-          runtime,
-          orchestrationCompatibilityEvidence: {
-            terminalHandle: 'term_worker',
-            paneKey: workerPane,
-            launchToken: 'worker-proof'
-          }
-        }
-      )
-    ).rejects.toThrow()
+    await expect(useRun(workerProof)).rejects.toThrow()
     expect(db.getRun(runId)?.coordinator_pane_key).toBe(pane)
   })
 
@@ -470,15 +546,7 @@ describe('Kernel service admission', () => {
     'rejects managed low-level dispatch, including dryRun=%s',
     async (dryRun) => {
       await configure()
-      await expect(
-        call('orchestration.dispatch', {
-          task: taskId,
-          run: runId,
-          from: 'term_coord',
-          to: 'term_worker',
-          dryRun
-        })
-      ).rejects.toMatchObject({ code: 'kernel_unsupported_path' })
+      await expect(dispatch({ dryRun })).rejects.toMatchObject({ code: 'kernel_unsupported_path' })
       expectNoEffects()
     }
   )
@@ -506,9 +574,8 @@ describe('Kernel service admission', () => {
     'rejects policy changes during async preparation: %s',
     async (next) => {
       await configure()
-      vi.mocked(runtime.showTerminal).mockImplementation(async () => {
+      duringPreparation(() => {
         db.db.prepare('UPDATE runs SET kernel_config = ? WHERE id = ?').run(next, runId)
-        return { handle: 'term_coord', worktreeId: 'repo::parent' } as never
       })
       await expect(start()).rejects.toMatchObject({ code: 'kernel_config_changed' })
       expectNoEffects()
@@ -516,19 +583,15 @@ describe('Kernel service admission', () => {
   )
 
   it('detects off-to-managed changes during async native preparation', async () => {
-    vi.mocked(runtime.showTerminal).mockImplementation(async () => {
-      await configure()
-      return { handle: 'term_coord', worktreeId: 'repo::parent' } as never
-    })
+    duringPreparation(() => configure())
     await expect(start()).rejects.toMatchObject({ code: 'kernel_config_changed' })
     expectNoEffects()
   })
 
   it('rechecks Task bindings after async work', async () => {
     await configure()
-    vi.mocked(runtime.showTerminal).mockImplementation(async () => {
+    duringPreparation(() => {
       db.db.prepare('UPDATE tasks SET deps = ? WHERE id = ?').run('["missing"]', taskId)
-      return { handle: 'term_coord', worktreeId: 'repo::parent' } as never
     })
     await expect(start()).rejects.toMatchObject({ code: 'kernel_task_mismatch' })
     expectNoEffects()
@@ -549,12 +612,7 @@ describe('Kernel service admission', () => {
         ]
       }
     })
-    const mutation = {
-      callerFingerprint: 'remote-caller',
-      requestId: 'remote-request',
-      method: 'orchestration.workerStart',
-      payloadHash: 'remote-payload'
-    }
+    const mutation = startMutation('remote-caller', 'remote-request', 'remote-payload')
     await expect(
       start({ on: 'remote', repo: 'repo' }, { ...ctx, orchestrationMutation: mutation })
     ).rejects.toMatchObject({ code: 'kernel_config_changed' })
@@ -578,12 +636,7 @@ describe('Kernel service admission', () => {
       db.db.prepare('UPDATE runs SET kernel_config = NULL WHERE id = ?').run(runId)
       return original(input)
     })
-    const mutation = {
-      callerFingerprint: 'caller-test',
-      requestId: 'request-test',
-      method: 'orchestration.workerStart',
-      payloadHash: 'payload-test'
-    }
+    const mutation = startMutation('caller-test', 'request-test', 'payload-test')
     await expect(start({}, { ...ctx, orchestrationMutation: mutation })).rejects.toMatchObject({
       code: 'kernel_config_changed'
     })
@@ -610,15 +663,9 @@ describe('Kernel service admission', () => {
       await configure()
       return true
     })
-    await expect(
-      call('orchestration.dispatch', {
-        task: taskId,
-        run: runId,
-        from: 'term_coord',
-        to: 'term_worker',
-        inject: true
-      })
-    ).rejects.toMatchObject({ code: 'kernel_unsupported_path' })
+    await expect(dispatch({ inject: true })).rejects.toMatchObject({
+      code: 'kernel_unsupported_path'
+    })
     expectNoEffects()
   })
 
@@ -628,30 +675,20 @@ describe('Kernel service admission', () => {
       plan.tasks.push({ ...plan.tasks[0], key: next.id, writePaths: [`src/parallel${i}.ts`] })
     }
     await configure()
-    db.createStartingWorkerDispatch({
-      taskId,
-      startOptions: {},
-      expectedKernelConfig: db.getRun(runId)!.kernel_config
-    })
+    reserveStartingDispatch()
     let arrivals = 0
     let release!: () => void
     const barrier = new Promise<void>((resolve) => {
       release = resolve
     })
-    vi.mocked(runtime.showTerminal).mockImplementation(async () => {
+    duringPreparation(async () => {
       arrivals++
       if (arrivals === 2) {
         release()
       }
       await barrier
-      return { handle: 'term_coord', worktreeId: 'repo::parent' } as never
     })
-    const mutations = [1, 2].map((i) => ({
-      callerFingerprint: 'race',
-      requestId: `race-${i}`,
-      method: 'orchestration.workerStart',
-      payloadHash: `payload-${i}`
-    }))
+    const mutations = [1, 2].map((i) => startMutation('race', `race-${i}`, `payload-${i}`))
     const results = await Promise.allSettled(
       plan.tasks
         .slice(1)
@@ -694,11 +731,7 @@ describe('Kernel service admission', () => {
     const next = db.createTask({ spec: 'Next independent', runId })
     plan.tasks.push({ ...plan.tasks[0], key: next.id, writePaths: ['src/next.ts'] })
     await configure({ repoId: 'repo', plan, limits: { maxConcurrentWorkers: 1 } })
-    db.createStartingWorkerDispatch({
-      taskId,
-      startOptions: {},
-      expectedKernelConfig: db.getRun(runId)!.kernel_config
-    })
+    reserveStartingDispatch()
     taskId = next.id
     await expect(start({ limits: { maxConcurrentWorkers: 100 } })).rejects.toMatchObject({
       code: 'kernel_concurrency_limit'
@@ -740,9 +773,7 @@ describe('Kernel service admission', () => {
       const stop = vi
         .spyOn(runtime, 'stopOrchestrationFederationRelay')
         .mockImplementation(() => {})
-      await expect(
-        call('orchestration.reset', { [scope]: true }, { runtime })
-      ).rejects.toMatchObject({ code: 'kernel_unsupported_path' })
+      await expect(reset(scope)).rejects.toMatchObject({ code: 'kernel_unsupported_path' })
       expect(stop).not.toHaveBeenCalled()
       expect(db.getTask(taskId)).toBeDefined()
       expectNoEffects()
@@ -757,7 +788,7 @@ describe('Kernel service admission', () => {
       db.db.prepare('UPDATE runs SET kernel_default_max_attempts = 2 WHERE id = ?').run(runId)
       original()
     })
-    await expect(call('orchestration.reset', { tasks: true }, { runtime })).rejects.toMatchObject({
+    await expect(reset('tasks')).rejects.toMatchObject({
       code: 'kernel_unsupported_path'
     })
     expect(db.getDispatchContextById(prior.dispatch.id)).toBeDefined()
@@ -766,7 +797,7 @@ describe('Kernel service admission', () => {
 
   it.each(['all', 'tasks'])('keeps the purely native %s reset path available', async (scope) => {
     const stop = vi.spyOn(runtime, 'stopOrchestrationFederationRelay').mockImplementation(() => {})
-    expect(await call('orchestration.reset', { [scope]: true }, { runtime })).toEqual({
+    expect(await reset(scope)).toEqual({
       reset: scope
     })
     expect(stop).toHaveBeenCalledOnce()
@@ -776,7 +807,7 @@ describe('Kernel service admission', () => {
   it('keeps managed message reset available without stopping relays or clearing Task state', async () => {
     await configure()
     const stop = vi.spyOn(runtime, 'stopOrchestrationFederationRelay').mockImplementation(() => {})
-    expect(await call('orchestration.reset', { messages: true }, { runtime })).toEqual({
+    expect(await reset('messages')).toEqual({
       reset: 'messages'
     })
     expect(stop).not.toHaveBeenCalled()
@@ -793,7 +824,7 @@ describe('Kernel service admission', () => {
 
   it('explicitly disables an idle Run and preserves native current-workspace startup', async () => {
     await configure()
-    await call('orchestration.runUse', { id: runId, from: 'term_coord' })
+    await useRun()
     expect(db.getRun(runId)?.kernel_config).not.toBeNull()
     await configure(null)
     const result = await start({ worktree: 'current', name: undefined }, { runtime })
@@ -803,11 +834,7 @@ describe('Kernel service admission', () => {
   })
 
   it('keeps low-level native dispatch available when Kernel is absent', async () => {
-    const result = await call(
-      'orchestration.dispatch',
-      { task: taskId, run: runId, from: 'term_coord', to: 'term_worker' },
-      { runtime }
-    )
+    const result = await dispatch({}, { runtime })
     expect(result).toMatchObject({ injected: false, dispatch: { task_id: taskId } })
   })
 })

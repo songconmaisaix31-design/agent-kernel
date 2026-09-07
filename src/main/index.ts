@@ -252,7 +252,11 @@ import { ManagedCodexHomeTemporarilyUnavailableError } from './codex-accounts/ho
 import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
 import type { CodexSessionResumePreparation } from './codex/codex-session-resume-home'
 import { prepareCodexSessionResume } from './codex/codex-session-resume-preparation'
-import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from './codex/codex-home-paths'
+import {
+  assertExperimentCodexHomeConfiguration,
+  getOrcaManagedCodexHomePath,
+  getSystemCodexHomePath
+} from './codex/codex-home-paths'
 import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
 import type { AgentProviderSessionMetadata } from '../shared/agent-session-resume'
 import { getDefaultWslDistro } from './wsl'
@@ -1152,6 +1156,10 @@ function prepareCodexRuntimeHomeForLaunch(
   return runtimeHomePath
 }
 
+function resolveCurrentHostCodexSessionSource(): string | undefined {
+  return resolveHostCodexSessionSourceHome(store!.getSettings())
+}
+
 async function prepareCodexSessionResumeForLaunch(args: {
   providerSession: AgentProviderSessionMetadata
   target: CodexAccountSelectionTarget
@@ -1511,7 +1519,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
       prepareAiVaultSessionResume: (args) =>
         prepareCodexAiVaultSessionResume(args, {
           runtimeHome: codexRuntimeHome,
-          systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
+          systemCodexHomePath: resolveCurrentHostCodexSessionSource()
         }),
       onBeforeRelaunch: async () => {
         isQuitting = true
@@ -2181,6 +2189,7 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
 }
 
 void app.whenReady().then(async () => {
+  assertExperimentCodexHomeConfiguration()
   logStartupMilestone('app-ready')
   installMainThreadHangWatchdog({ userDataPath: getCanonicalUserDataPath() })
   const hangDetection = consumeHangDetectionMarker(
@@ -2493,8 +2502,7 @@ void app.whenReady().then(async () => {
   codexSessionMigration = createCodexSessionMigrationScheduler({
     isEligible: () => codexRuntimeHome?.isHostSystemDefaultSessionMigrationEligible() === true,
     isQuitting: () => isQuitting,
-    resolveSystemCodexHomePathOverride: () =>
-      resolveHostCodexSessionSourceHome(store!.getSettings()),
+    resolveSystemCodexHomePathOverride: () => resolveCurrentHostCodexSessionSource(),
     prepareScheduledRun: () => codexRuntimeHome?.prepareHostSystemDefaultSessionMigrationPass(),
     finishScheduledRun: () => codexRuntimeHome?.finishHostSystemDefaultSessionMigrationPass(),
     startBackfill: startCodexSessionBackfillInBackground,
@@ -2660,7 +2668,7 @@ void app.whenReady().then(async () => {
     prepareAiVaultSessionResume: (args) =>
       prepareCodexAiVaultSessionResume(args, {
         runtimeHome: codexRuntimeHome,
-        systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
+        systemCodexHomePath: resolveCurrentHostCodexSessionSource()
       }),
     buildAgentHookPtyEnv: () =>
       isAgentStatusHooksEnabled(store?.getSettings()) ? agentHookServer.buildPtyEnv() : {},

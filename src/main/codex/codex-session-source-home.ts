@@ -1,4 +1,5 @@
 import type { GlobalSettings } from '../../shared/global-settings-types'
+import { getSystemCodexHomePath, isExperimentCodexSystemHomeEnabled } from './codex-home-paths'
 
 /**
  * Resolves the user-configured Codex *session history* source home, if any.
@@ -14,6 +15,9 @@ import type { GlobalSettings } from '../../shared/global-settings-types'
 export function resolveHostCodexSessionSourceHome(
   settings: Pick<GlobalSettings, 'codexSessionSourceHome'>
 ): string | undefined {
+  if (isExperimentCodexSystemHomeEnabled()) {
+    return getSystemCodexHomePath()
+  }
   return normalizeSourceHome(settings.codexSessionSourceHome?.host)
 }
 
