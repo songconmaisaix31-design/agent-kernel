@@ -145,3 +145,20 @@ if ($LASTEXITCODE -ne 0) { throw 'Main build failed' }
 ## 迁移来源（2026-09-06）
 
 本文必要内容迁自 [研究提交 ad997b7](https://github.com/songconmaisaix31-design/Multi-agent-kernel/commit/ad997b786f451a6e3fea444b52a601c8b0c6ed33)，组合交付保存在 [08d1ff6](https://github.com/songconmaisaix31-design/Multi-agent-kernel/tree/08d1ff6b8f2a0df4cce538213d7943508a18e5d2)。本文的未执行/建议描述是该批研究状态，实际实现和验收以本 Fork 的 [唯一看板](../V01-TODO.md) 为准。上游 tag 的 Git 解引用现已实测为 U。未复制旧库工程配置、许可证、完整记忆或认证数据。
+
+## M2 前置：只读 Git 候选范围检查（2026-09-08，B）
+
+本批新增 `reviewKernelCandidate({ plan, taskKey, repoPath, baseCommit, candidateCommit, executionHost })`，返回 `scope-checked`（固定 SHA、旧/新路径集合）或 `rejected`（错误码、原因）。调用者必须提供服务端已批准的 Plan 和宿主归属；入口仍调用 A 的 `validatePlan`，不从候选文件读取授权。**当前无 CLI/RPC 消费者接线，范围通过不是 accepted/integrated，也不是 Worker 或验收正文执行结果。**
+
+| 规则 | owner | 执行点 | 失败处理 | 测试/提交证据 | 状态 |
+|---|---|---|---|---|---|
+| 词法 Plan、任务 key、文件/目录边界 | A 类型/validator；B 调用 | `kernel-candidate-review.ts` 入口、`kernel-candidate-review-paths.ts` | 非法 Plan、未知任务、越界/特殊路径拒绝 | 本批真实 Git 入口回归；复用既有 validator | 运行已验证 |
+| 显式完整 SHA、对象确为 commit、批准基线一致、base 为 candidate 祖先 | B | 原生 `gitExecFileAsync`：`cat-file`、`merge-base --is-ancestor` | 缺对象、错误、无关历史均 rejected；禁用 replace，拒绝 shallow/grafts/partial clone | [代码 706cf15](https://github.com/songconmaisaix31-design/orca-kernel/commit/706cf15ffc9d4328167ffbdb4c03aa72be620ac2) | 运行已验证 |
+| 完整 NUL raw 差异与两端树交叉核对；删除旧路径、Git 检出的 rename/copy 两端均检查 | B | `diff-tree -r -M -C --find-copies-harder -l0`、`ls-tree -r -z --full-tree`、changed blob 检查 | 空差异、遗漏、解析/截断/读取错误拒绝；路径大小写歧义拒绝 | `kernel-candidate-review.test.ts`：63/63，包括真实特殊路径树和超限输出 | 运行已验证 |
+| 只支持 native 本地普通/linked Git worktree；变更模式仅 `100644` | B | 仓库路径/元数据检查及 raw 两端模式检查 | SSH/WSL/UNC、普通非 Git 目录、symlink/gitlink/执行位变化明确拒绝，无本地 fallback | 同上，覆盖受限宿主及真实 linked worktree | 运行已验证 |
+| 固定 argv，不用 shell；禁止外部 diff/textconv/hooks；每命令 15 秒、输出上限 2 MiB | B | 既有 runner，加显式只读选项、清除继承 Git 覆盖变量 | Git 失败/超限拒绝，不把部分输出当空差异 | 注入输入、replace、恶意配置、真实大树回归；Node-only | 运行已验证 |
+| 依赖任务、可信验收执行、正式接纳/集成 | 后续总控决定 | 本批依赖入口拒绝；其余无执行点 | 不放开依赖，不执行 acceptance，不写状态或自动合入 | 本批未执行真实 Worker、验收命令或候选 Electron | 未支持 |
+
+验证环境：Windows，Git `2.47.0.windows.1`、Node `24.16.0`、pnpm `10.24.0`；单文件 Vitest 实际发现并通过 63 项，`pnpm run typecheck:node`、Node `tsc --listFilesOnly` 收录三份新 TS、改动代码 oxlint/oxfmt、diff check 均通过。日志位于仓外 `C:/Users/DW/AppData/Local/OrcaKernelLab/evidence/continuation-20260908-003901/B`；Node 测试设置进程级 `ELECTRON_OVERRIDE_DIST_PATH`，没有安装依赖或启动 Electron。首轮 7 项 fixture 失败源于 Windows `update-index` 丢弃特殊名称，改用真实 `mktree` 并先断言树内名称后通过，未削弱负例。
+
+命令遵守 [Git 2.25 基线](reference/git-compatibility.md)，选项依据 [2.25 diff-tree 文档](https://git-scm.com/docs/git-diff-tree/2.25.0)；本机未另装或实跑 Git 2.25。范围是两棵固定提交树的净差异，Git rename/copy 检测不是内容来源证明；不审计中间已回退的提交、不锁定仓库元数据、不证明工作目录 junction/hardlink 沙箱或仓库文件的抗并发篡改能力。范围结果尚未接入接纳流程，后续调用者仍须验证批准来源及实际宿主，并另行完成受信验收与集成。
