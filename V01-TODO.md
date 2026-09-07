@@ -12,7 +12,7 @@
 
 | 轨道 | 当前增量 / 互斥写权 | 模型与验收 |
 |---|---|---|
-| A | R4 CLI 配置/关闭入口；仅 src/cli/handlers/orchestration.ts、orchestration-run-cli.test.ts、可选 orchestration-kernel-config.ts 及相邻测试、src/cli/help.ts | 原正式 Worktree 自然交接，新会话明确 terra/medium；原 A 已完成并空闲；真实 CLI handler 测试 + cli 类型检查 |
+| A | R4 CLI 配置/关闭入口；仅 src/cli/handlers/orchestration.ts、orchestration-run-cli.test.ts、可选 orchestration-kernel-config.ts 及相邻测试、src/cli/help.ts、src/cli/specs/orchestration.ts 及相邻 spec 测试 | 原正式 Worktree 自然交接，新会话明确 terra/medium；原 A 已完成并空闲；真实 CLI handler/parser 测试 + cli 类型检查 |
 | B | 顺序修 R1/R2/R3/R5；原 Run 配置、RPC 准入/派发、DB 事务及相邻测试；必要小模块限 src/main/runtime/orchestration/kernel-*、src/main/runtime/rpc/methods/orchestration-kernel-* | 原 B 强模型会话续做；复现反例，E3 总控审查；不改 A 的 CLI/Plan 文件 |
 | 总控 | 本看板、最小决策/用量记录、环境与验收 | E0 工具跑最终组合测试/类型/main 构建；最多两个写 Worker，不增常驻模型池；领域错误退 owner |
 
@@ -24,8 +24,10 @@
 
 | 任务/提交 | 风险 | 请求模型/effort | 实际模型证据 | 升级 | 用量/未知项 | 验收 |
 |---|---|---|---|---|---|---|
-| A R4（待派发） | 中 | gpt-5.6-terra / medium | 待回执与会话 | 0 | 未知 | 待执行 |
-| B R1/R2/R3/R5（待派发） | 高 | 保留原强模型会话 | 待核对，复用不声称降档 | 0 | 跨任务用量无分段不分摊 | 待执行 |
+| A R4 / task_aa77d7575448 | 中 | gpt-5.6-terra / medium | ctx_1aaf4bfdf205 requested/effective 相同；Codex 真实状态行确认 terra medium | 0 | 任务 token/费用未知；继承 fast 不视作低成本证明 | 执行中；agent_prompt_stalled 回执保持 failed，同一执行者普通交接继续，无重复派发 |
+| B R1/R2/R3/R5 / task_5bc6f1c39b34 | 高 | 原 gpt-6-astra / high | Codex /status 确认；ctx_6b7bf0bcc32e 复用会话 ready | 0 | 11:29 刷新周额度 99%；原 7% 为 stale。周额度不是任务/强模型独立预算，token/费用不可分摊 | 执行中 |
+
+R5 局部默认：maxConcurrentWorkers=2、maxAttemptsPerTask=2、maxAttempts=2×首次计划任务数；均须有限正整数，实际计数读取原 Run 记录，更新配置不清零。此处是 Run 资源准入，不是跨 Run 费用上限。R2 owner 锚由已验证协调者生成并保留，不能由用户配置 JSON 冒认；旧无锚且已失去当前协调者的状态明确拒绝。
 
 以上只用于开发，不增加实验组，不改变 CURRENT/KERNEL 正式验收；本批不启动正式实验。
 
