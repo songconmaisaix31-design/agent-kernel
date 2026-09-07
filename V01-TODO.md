@@ -1,5 +1,26 @@
 # 当前窄批次：批准正文与真实独立 Worker 冒烟（2026-09-07）
 
+## 21:46 免费实验账户最小链路：登录成功，受管派发前拒绝
+
+本轮仅链路验证，没有项目源码改动、依赖安装、CURRENT 变更或正式对照。保留 Windows 候选 `f3f675d`、runtime `e61c400d-a1ca-438c-8c9e-1835c65c6494`。实验 home 的官方登录返回 `Logged in using ChatGPT`，候选账户 `oauth/hasAuth=true`，额度状态 `ok`，300 分钟窗口用量 0%，没有切账号/API/充值或复制认证。
+
+工具已建一次性 `body-smoke-20260907/managed-worker-once` 仓库，初始空提交 `fa9c84e21297cc10fe6a3e8cac5d4f126c90fafe`；外置 `verify-managed-smoke.ps1` 验收只允许 `smoke-result.txt` 的精确 UTF-8 无 BOM 字节 `ORCA_KERNEL_MANAGED_SMOKE_OK` 加 LF，单一本地任务提交。准备的无依赖 Plan 限并发/累计/单任务尝试为 1；未将此准备状态当作已持久化受管授权。
+
+实际结果：Run `run_4b9bbf27779b`、Task `task_3b7941cc07dc` 已创建，但 Kernel 配置未持久化。裸 `orca` 的 CLI 来源误指日常安装版，报 `invalid_argument / Unknown flag --kernel-config`，未到运行时；显式 Fork CLI 到达候选后报 `consumer_fenced / Kernel changes require the verified Run coordinator`。根只读核对 `orchestration-kernel-admission.ts`，拒绝在调用者身份验证处，终端句柄本身不构成授权。没有绕过身份、手工改绿、模型盲试或重新派发。
+
+候选 Worker/Dispatch 记录均为 0，实际 Worker 模型、effort、fast 与 token 用量均未产生；先前 default/default 只是尚未落实的选择意图，不等于免费小号模型权限已验证。外置验收在目标文件缺失处失败，仓库干净且只有 seed commit，无任务提交、无 worker_done。独立短停止场景 **待测**；只停止了新建协调终端（`stopped: 1`），不冒充 Worker 停止。候选、实验认证、Run/Task、小仓库和外置验收保留。终端中旧 resume 文本不等于执行证据，发现的相关既有进程早一天启动且未动，不据此声称全机模型用量为零。
+
+具体剩余限制：需要先验明匹配 Fork CLI 的候选原生协调者启动与调用者绑定，再核对实际账户默认模型/effort/fast，才有真实 Worker 执行条件；本轮按用户“不承担项目开发”边界止于证据，不作源码修复或新协调终端试验。详见 [实际失败证据](docs/WINDOWS-MANAGED-SMOKE.md)，来源候选文档提交 `f90bc31`、`6116173` 已按序迁入正式分支。
+
+本轮协调用量快照与免费 Worker 用量分开。起点为 21:46:11 用户消息前各会话最后 token_count，均为续段差值，无新 Agent、无 A/B 唤醒、无恢复重置；缓存输入包含于输入、推理输出包含于输出，客户端 token 不是费用，也不代表免费小号的模型消耗。
+
+| 执行者 | 输入 | 缓存输入 | 输出 | 推理输出 | total | 截止北京时间 |
+|---|---:|---:|---:|---:|---:|---|
+| 总控 / gpt-6-astra high | 5,547,766 | 5,485,440 | 10,077 | 5,077 | 5,557,843 | 21:58:22 |
+| 同一环境执行者 / gpt-5.6-terra medium | 5,993,722 | 5,902,592 | 21,768 | 7,208 | 6,015,490 | 21:58:32 |
+
+原始段计数保存在实验 native-run/free-smoke-usage-start.json 与 free-smoke-usage-end.json；快照后的收尾提交/回复未包含。以下旧批状态、登录 pending、PID 和用量保留为时间点历史，以上述当前结果为准。
+
 ## 20:35 续批授权：实验系统 home 窄源码与真实运行
 
 21:16 状态：源码、六类针对检查及候选桌面启动已完成；官方实验登录等待用户浏览器确认，真实受管 Worker 与短停止尚未执行。实验 config 已显式设置 `cli_auth_credentials_store = "file"`，依据 [官方认证存储说明](https://developers.openai.com/codex/auth/)；不将 CODEX_HOME 自身当作文件存储模式证明。仅停止了此前本次自有 pending 登录并重启，现保留登录 supervisor `124068`、CLI child `123992`，先前浏览器页面失效。没有复制日常刷新凭证、退出日常账户或切 API 付费。实际认证成功前不得派发模型任务。

@@ -44,9 +44,9 @@ Command evidence was retained in the active terminal transcript rather than dupl
 
 Historical note: the pre-existing `usage-start.json`/`usage-deltas.json` records were read only and do not establish this continuation's usage. This candidate smoke has created no model session; the environment executor session identifier is recorded only for coordinator correlation, and its actual token interval is owned by the unique dashboard rather than inferred or counted in this report.
 
-## Required next action
+## Historical next action before login completed
 
-The candidate desktop and the official experiment-scoped login are live, but authentication remains pending user browser confirmation. After successful confirmation is observed only through experiment-home state, the bounded Run → Task → `worker-start` / observable `worker-stop` path may proceed under the existing one-task/one-stop budget; until then, do not start a model Worker, copy daily credentials, or begin another paid flow.
+At the prior bootstrap checkpoint, the candidate desktop and experiment-scoped login were live while browser confirmation was pending. Login subsequently succeeded; the current admission result and remaining identity boundary are recorded below. The one-task/one-stop budget, no credential-copy rule, and no additional paid flow remain unchanged.
 
 ## Managed Worker admission attempt
 
