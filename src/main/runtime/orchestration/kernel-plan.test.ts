@@ -50,6 +50,21 @@ test('required descriptive arrays may be empty; acceptance and writePaths may no
   input.tasks[0].escalateWhen = [];
   accepts(input);
 });
+test('approved task spec preserves its original whitespace in the detached result', () => {
+  const input = plan();
+  input.tasks[0].spec = '  Approved task body.\n\nKeep this formatting.  ';
+  const result = accepts(input);
+  assert.equal(result.tasks[0].spec, input.tasks[0].spec);
+  assert.notEqual(result.tasks[0], input.tasks[0]);
+});
+test('missing task spec remains compatible with existing schemaVersion 1 plans', () => {
+  const result = accepts(plan());
+  assert.equal(Object.hasOwn(result.tasks[0], 'spec'), false);
+});
+for (const value of ['', ' \n ', null, 1, false, {}]) {
+  test(`reject invalid task spec ${JSON.stringify(value)}`, () =>
+    rejects({ ...plan(), tasks: [{ ...task(), spec: value }] }, 'invalid_field', 'tasks[0].spec'));
+}
 
 for (const value of [null, undefined, 1, true, '', [], () => ({}), new Date()]) {
   test(`reject non-plan input ${String(value)}`, () => rejects(value, 'invalid_field'));
