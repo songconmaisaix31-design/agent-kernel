@@ -1,6 +1,7 @@
 import type { OrchestrationDb } from './db'
 import { OrchestrationError } from './orchestration-error'
 import { isEquivalentPaneKey } from './db/pane-key-match'
+import { parseWorkerTerminalHostScope } from './worker-terminal-process-liveness'
 
 export type KernelLimits = {
   maxConcurrentWorkers: number
@@ -109,7 +110,7 @@ function hasUnreleasedKernelResiduals(
     resource.owner_dispatch_id !== dispatchId ||
     resource.ownership_state !== 'released' ||
     resource.release_state !== 'released' ||
-    resource.host_scope !== null ||
+    parseWorkerTerminalHostScope(resource.host_scope)?.kind !== 'local' ||
     db.getFederatedDispatch(dispatchId) ||
     !worker.worktree_id?.includes('::') ||
     worker.worktree_id.startsWith('folder:') ||
@@ -132,14 +133,14 @@ function hasUnreleasedKernelResiduals(
     if (residual.kind === 'worktree') {
       return (
         residual.id !== resource.worktree_id ||
-        !['created_child', 'created_top_level'].includes(residual.action as string)
+        (residual.action !== 'created_child' && residual.action !== 'created_top_level')
       )
     }
     if (residual.kind === 'terminal') {
       return (
         residual.id !== resource.terminal_handle ||
         residual.role !== 'agent' ||
-        !['created', 'reused_agent_terminal'].includes(residual.action as string)
+        (residual.action !== 'created' && residual.action !== 'reused_agent_terminal')
       )
     }
     return true

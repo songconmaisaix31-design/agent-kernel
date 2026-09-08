@@ -73,6 +73,7 @@ describe('Kernel Run resource limits', () => {
       worktreeId,
       effects,
       setupState: 'skipped',
+      hostScope: '{"kind":"local","hostId":"local"}',
       terminalOwnership: 'created'
     })
     db.failWorkerStart(dispatch.id, 'dispatch_input', 'agent_prompt_stalled')
@@ -132,6 +133,8 @@ describe('Kernel Run resource limits', () => {
     '[{"kind":"terminal"}]',
     '[{"kind":"terminal","id":"term_failed","action":"created"}]',
     '[{"kind":"terminal","id":"term_failed","role":"setup","action":"created"}]',
+    '[{"kind":"terminal","id":"term_failed","role":"agent","action":["created"]}]',
+    '[{"kind":"worktree","id":"repo::/worktrees/failed-start","action":1}]',
     '[{"kind":"worktree","id":"repo::/worktrees/failed-start","action":"unknown"}]'
   ])('blocks malformed or unknown residuals despite release: %s', (residuals) => {
     const { dispatchId } = releasedFailedStart()
@@ -189,6 +192,27 @@ describe('Kernel Run resource limits', () => {
     db.db
       .prepare(`UPDATE worker_terminal_resources SET ${column} = ? WHERE id = ?`)
       .run(value, resourceId)
+    expectResidualBlocked()
+  })
+
+  it.each([
+    null,
+    '',
+    '{',
+    'null',
+    '[]',
+    '{}',
+    '{"kind":"local"}',
+    '{"kind":"local","hostId":"remote"}',
+    '{"kind":"unknown","hostId":"local"}',
+    '{"kind":"remote","hostId":"remote"}',
+    '{"kind":"ssh","targetId":"remote"}',
+    '{"kind":"wsl","hostId":"local","distro":"Ubuntu"}'
+  ])('blocks residuals without proven local host scope: %s', (hostScope) => {
+    const { resourceId } = releasedFailedStart()
+    db.db
+      .prepare('UPDATE worker_terminal_resources SET host_scope = ? WHERE id = ?')
+      .run(hostScope, resourceId)
     expectResidualBlocked()
   })
 
