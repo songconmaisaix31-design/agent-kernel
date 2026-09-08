@@ -23,6 +23,12 @@ import { sortDirEntries } from '../../shared/file-name-sort'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
 import { extractLastOsc7Uri, extractOscScanTail } from '../daemon/osc7-uri-extraction'
 import { parseFileUriPathParts } from '../daemon/osc7-file-uri'
+import {
+  IMMEDIATE_KILL_PHYSICAL_EXIT_TIMEOUT_MS,
+  SESSION_FORCE_KILL_RETRY_MS
+} from '../daemon/session-termination-controller'
+import { WINDOWS_ROOT_IDENTITY_TIMEOUT_MS } from '../windows-pty-root-identity'
+import { WINDOWS_PROCESS_TREE_KILL_TIMEOUT_MS } from '../windows-process-tree-kill'
 import type { AgentStatus } from '../../shared/agent-detection'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import type { TerminalOscColorQueryReplyColors } from '../../shared/terminal-osc-color-reply'
@@ -2095,6 +2101,12 @@ const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
 // fallback kill is needed, so keep it short — an unreachable host must not stall the rejection.
 const REJECTED_SPLIT_PTY_STOP_TIMEOUT_MS = 2_000
 const EXPLICIT_TERMINAL_CLOSE_STOP_TIMEOUT_MS = 2_000
+const WINDOWS_NATIVE_TERMINAL_CLOSE_STOP_TIMEOUT_MS =
+  WINDOWS_ROOT_IDENTITY_TIMEOUT_MS +
+  WINDOWS_PROCESS_TREE_KILL_TIMEOUT_MS +
+  SESSION_FORCE_KILL_RETRY_MS +
+  IMMEDIATE_KILL_PHYSICAL_EXIT_TIMEOUT_MS +
+  EXPLICIT_TERMINAL_CLOSE_STOP_TIMEOUT_MS
 const MOBILE_TERMINAL_READY_FALLBACK_MS = 1000
 const SSH_PANE_RECOVERY_GRACE_MS = 30_000
 // Why: long enough that a keystroke burst to a proven-dead leaf probes once,
@@ -29710,11 +29722,20 @@ export class OrcaRuntimeService {
     supervisedGuard?: () => boolean
   ): Promise<boolean> {
     let addressedPtyStopped = false
-    const deadlineMs = Date.now() + EXPLICIT_TERMINAL_CLOSE_STOP_TIMEOUT_MS
+    const startedAt = Date.now()
     for (const ptyId of ptyIds) {
       if (supervisedGuard && (ptyId !== addressedPtyId || !supervisedGuard())) {
         return false
       }
+      const pty = this.ptysById.get(ptyId)
+      // Native Windows teardown must fit identity, tree-kill and physical-exit waits before verification.
+      const timeoutMs =
+        process.platform === 'win32' &&
+        pty &&
+        this.getOrchestrationCompatibilityHostScope(pty)?.kind === 'local'
+          ? WINDOWS_NATIVE_TERMINAL_CLOSE_STOP_TIMEOUT_MS
+          : EXPLICIT_TERMINAL_CLOSE_STOP_TIMEOUT_MS
+      const deadlineMs = startedAt + timeoutMs
       // Why here: this is the single funnel for an explicit close, and the
       // intent must be on record before the stop, since the provider may report
       // the exit itself with a status that reads like a natural finish.

@@ -117,6 +117,47 @@ describe('native supervised terminal close fence', () => {
     expect(f.kill).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { platform: 'darwin', host: 'local' },
+    { platform: 'linux', host: 'local' },
+    { platform: 'win32', host: 'ssh' },
+    { platform: 'win32', host: 'wsl' }
+  ])('preserves the existing close deadline for $platform/$host', async ({ platform, host }) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+    try {
+      const f = fixture(host === 'ssh' ? 'ssh-host' : null)
+      if (host === 'wsl') {
+        f.runtime.registerPty(
+          'pty-target',
+          'folder:fixture',
+          null,
+          {
+            tabId: f.tabId,
+            leafId: f.leafId,
+            incarnationId: 'incarnation-first' as never
+          },
+          true
+        )
+      }
+      const stopBudgets: number[] = []
+      f.stopAndWait.mockImplementation(async (...args: unknown[]) => {
+        const opts = args[1] as { deadlineMs: number }
+        stopBudgets.push(opts.deadlineMs - Date.now())
+        return true
+      })
+      const closing = f.runtime.closeTerminal('term_target')
+      await vi.waitFor(() => expect(f.closeTab).toHaveBeenCalledTimes(1))
+      f.finish()
+      await closing
+      expect(stopBudgets).toHaveLength(1)
+      expect(stopBudgets[0]).toBeGreaterThan(0)
+      expect(stopBudgets[0]).toBeLessThanOrEqual(2_000)
+    } finally {
+      Object.defineProperty(process, 'platform', descriptor)
+    }
+  })
+
   it('does not signal another live resource hidden from the renderer in the same tab', async () => {
     const f = fixture()
     f.runtime.registerPty('pty-sentinel', 'folder:fixture', null, {
