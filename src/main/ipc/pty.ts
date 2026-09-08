@@ -5792,12 +5792,10 @@ export function registerPtyHandlers(
         })
       } catch (err) {
         if (!isPtyAlreadyGoneError(err)) {
-          if (connectionId) {
-            runtime?.markPtyLivenessUnverifiable?.(
-              ptyId,
-              err instanceof Error ? err.message : String(err)
-            )
-          }
+          runtime?.markPtyLivenessUnverifiable?.(
+            ptyId,
+            err instanceof Error ? err.message : String(err)
+          )
           console.warn(
             `[pty] Failed to stop PTY ${ptyId}: ${err instanceof Error ? err.message : String(err)}`
           )
@@ -5810,12 +5808,10 @@ export function registerPtyHandlers(
           return false
         }
       } catch (err) {
-        if (connectionId) {
-          runtime?.markPtyLivenessUnverifiable?.(
-            ptyId,
-            err instanceof Error ? err.message : String(err)
-          )
-        }
+        runtime?.markPtyLivenessUnverifiable?.(
+          ptyId,
+          err instanceof Error ? err.message : String(err)
+        )
         console.warn(
           `[pty] Failed to verify PTY ${ptyId} stopped: ${
             err instanceof Error ? err.message : String(err)
