@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setupPtyIpcSuite } from './pty-ipc-test-harness'
 import { registerPtyHandlers, getLocalPtyProvider } from './pty'
 import { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { OrchestrationDb } from '../runtime/orchestration/db'
 import { ORCHESTRATION_WORKER_STOP_METHODS } from '../runtime/rpc/methods/orchestration-worker-stop'
+import {
+  SessionTerminationController,
+  IMMEDIATE_KILL_PHYSICAL_EXIT_TIMEOUT_MS
+} from '../daemon/session-termination-controller'
+import type { SubprocessHandle } from '../daemon/session-subprocess-handle'
 
 vi.mock('electron', () => import('./pty-ipc-mock-registry').then((m) => m.electronModuleMock()))
 vi.mock('fs', () => import('./pty-ipc-mock-registry').then((m) => m.fsModuleMock()))
@@ -51,6 +56,100 @@ vi.mock('../codex/codex-state-db-backfill-recovery', () =>
 
 describe('local stop confirmation failure reason', () => {
   const { handlers, mainWindow, installDaemonTestProvider } = setupPtyIpcSuite()
+  afterEach(() => vi.useRealTimers())
+
+  function closeAfterNativeExit(supervised: boolean, exitDelay: number | null) {
+    vi.useFakeTimers()
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    let exited = false
+    const forceKill = vi.fn(() => {
+      if (exitDelay !== null) {
+        setTimeout(() => {
+          exited = true
+          termination.markPhysicalExit()
+        }, exitDelay)
+      }
+    })
+    const termination = new SessionTerminationController({
+      sessionId: 'deadline-pty',
+      subprocess: { forceKill } as unknown as SubprocessHandle,
+      launchAgent: null,
+      isExited: () => exited,
+      releaseProducerPause: () => {}
+    })
+    const shutdown = vi.fn(async (_id: string, opts: { deadlineMs?: number }) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          termination.forceKillAndWaitForExit(),
+          new Promise<never>((_resolve, reject) => {
+            const remaining = Math.max(1, (opts.deadlineMs ?? Date.now() + 30_000) - Date.now())
+            timer = setTimeout(
+              () => reject(new Error(`Request kill timed out after ${remaining}ms`)),
+              remaining
+            )
+          })
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    })
+    const listProcesses = vi.fn(async () => (exited ? [] : [{ id: 'deadline-pty' }]))
+    installDaemonTestProvider({ shutdown, listProcesses, hasPty: () => !exited })
+    const runtime = new OrcaRuntimeService(null, undefined, {
+      getLocalProvider: () => getLocalPtyProvider()
+    })
+    handlers.clear()
+    registerPtyHandlers(mainWindow as never, runtime)
+    runtime.registerPreAllocatedHandleForPty('deadline-pty', 'term_deadline')
+    runtime.registerPty('deadline-pty', 'folder:fixture', null, {
+      tabId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      leafId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      incarnationId: 'incarnation-deadline' as never
+    })
+    const closing = runtime.closeTerminal(
+      'term_deadline',
+      supervised ? { isCurrent: () => true } : undefined
+    )
+    return { closing, shutdown, forceKill, listProcesses }
+  }
+
+  it.each([false, true])(
+    'allows native physical exit past two seconds for supervised=%s',
+    async (supervised) => {
+      const { closing, shutdown, forceKill, listProcesses } = closeAfterNativeExit(
+        supervised,
+        3_000
+      )
+      await vi.advanceTimersByTimeAsync(3_001)
+      await expect(closing).resolves.toMatchObject({ ptyKilled: true })
+      expect(shutdown).toHaveBeenCalledTimes(1)
+      expect(forceKill).toHaveBeenCalledTimes(1)
+      expect(listProcesses).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each([false, true])(
+    'preserves native physical-exit timeout for supervised=%s',
+    async (supervised) => {
+      const { closing, forceKill, listProcesses } = closeAfterNativeExit(supervised, null)
+      let settled = false
+      void closing.then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(IMMEDIATE_KILL_PHYSICAL_EXIT_TIMEOUT_MS - 1)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(2)
+      await expect(closing).resolves.toMatchObject({
+        ptyKilled: false,
+        ptyStopVerdict: 'unverifiable',
+        ptyStopReason: 'Timed out waiting for PTY process exit: deadline-pty'
+      })
+      expect(forceKill).toHaveBeenCalledTimes(1)
+      expect(listProcesses).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(IMMEDIATE_KILL_PHYSICAL_EXIT_TIMEOUT_MS)
+    }
+  )
 
   it.each(['shutdown', 'inventory'])(
     'preserves the local %s exception while returning false',
