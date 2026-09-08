@@ -5,6 +5,9 @@ import { RuntimeClientError } from '../runtime-client'
 import { getRequiredStringFlag } from '../flags'
 import { printResult } from '../format'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 type ResolveCoordinator = (
   flags: Map<string, string | boolean>,
   cwd: string,
@@ -19,7 +22,7 @@ export function kernelAcceptanceHandlers(
     input: Record<string, unknown>
   ) => {
     try {
-      return await client.call<Record<string, unknown>>(method, input, { timeoutMs: 120_000 })
+      return await client.call<unknown>(method, input, { timeoutMs: 120_000 })
     } catch (error) {
       if (error instanceof RuntimeClientError && error.code === 'method_not_found') {
         throw new RuntimeClientError(
@@ -47,10 +50,13 @@ export function kernelAcceptanceHandlers(
         run: getRequiredStringFlag(flags, 'run'),
         checks
       })
-      const policy = result.result.policy as { approvalId?: unknown; checks?: unknown } | undefined
+      const reply = result.result
+      const policy = isRecord(reply) ? reply.policy : undefined
       if (
-        result.result.status !== 'approved' ||
-        typeof policy?.approvalId !== 'string' ||
+        !isRecord(reply) ||
+        reply.status !== 'approved' ||
+        !isRecord(policy) ||
+        typeof policy.approvalId !== 'string' ||
         !isDeepStrictEqual(policy.checks, checks)
       ) {
         throw new RuntimeClientError(
@@ -68,11 +74,10 @@ export function kernelAcceptanceHandlers(
         dispatch: getRequiredStringFlag(flags, 'dispatch'),
         candidate: getRequiredStringFlag(flags, 'candidate')
       })
-      const acceptance = result.result.acceptance as
-        | { status?: string; task?: string; dispatch?: string; candidate?: string }
-        | undefined
+      const acceptance = isRecord(result.result) ? result.result.acceptance : undefined
       if (
-        acceptance?.status !== 'accepted' ||
+        !isRecord(acceptance) ||
+        acceptance.status !== 'accepted' ||
         acceptance.task !== flags.get('task') ||
         acceptance.dispatch !== flags.get('dispatch') ||
         acceptance.candidate !== flags.get('candidate')

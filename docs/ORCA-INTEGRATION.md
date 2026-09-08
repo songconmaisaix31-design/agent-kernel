@@ -20,7 +20,7 @@ orca orchestration kernel-accept --run <run_id> --from <coordinator> --task <tas
 
 检查源码是批准者信任的可执行代码，**不是沙箱**；若它主动导入候选代码，批准者需承担该执行风险。子进程仅继承必要系统路径变量，清除 Node 注入变量和 Orca 调用凭据，Electron Node 模式仅限该子进程；不安装依赖、不调用模型、不启动桌面。验证前后检查快照真实文件字节及源 HEAD，不声称文件系统抗外部并发篡改隔离或子进程树沙箱。清理只针对本次独占临时路径，失败返回明确保留路径，绝不清理原 Worker 工作树。旧服务无新方法时 CLI 明确 unsupported，不回退原生完成。
 
-本批证据保存在仓外 `evidence/continuation-20260908-003901/P1-acceptance`：组合12文件482例通过；新增持久性补例后两文件发现/执行55/55（37服务+18 Git/策略）；末轮 fixture 把 SQLite 放进 Git 根而导致越界，已移到测试仓库外并保留失败。Node/CLI类型和编译、main构建逐项记录，首轮 fixture、类型/静态及稀疏构建资源失败保留；未运行全库、真实 Worker 或 P0。CLI 编译使用原 tsc 与 verify-cli-bin 步骤，未执行全局 install-dev-cli；既有 CLI include 漏项经批准仅加 codex-experiment-home.ts 一行，未改其环境源码。
+本批证据保存在仓外 `evidence/continuation-20260908-003901/P1-acceptance`：组合12文件482例通过；新增持久性补例后两文件发现/执行55/55（37服务+18 Git/策略）；末轮 fixture 把 SQLite 放进 Git 根而导致越界，已移到测试仓库外并保留失败。窄审返修后4文件发现/执行101/101，覆盖真实临时路径别名、畸形边界解析及Git blob字节/OID不符；Node/CLI类型和编译、main构建逐项记录，首轮 fixture、类型/静态及稀疏构建资源失败保留；未运行全库、真实 Worker 或 P0。CLI 编译使用原 tsc 与 verify-cli-bin 步骤，未执行全局 install-dev-cli；既有 CLI include 漏项经批准仅加 codex-experiment-home.ts 一行，未改其环境源码。
 
 ## 批准正文修复与真实 Worker 准备（2026-09-07）
 

@@ -1,3 +1,4 @@
+import { revalidateKernelAcceptanceReply } from './orchestration-kernel-acceptance'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../../../shared/protocol-version'
 import { RpcDispatcher } from '../dispatcher'
 import { createHash } from 'node:crypto'
@@ -495,5 +496,45 @@ describe('Kernel acceptance registered service', () => {
     runtime.setOrchestrationDb(db)
     expect(stored()).toEqual(before)
     expect(await accept()).toHaveProperty('duplicate', true)
+  })
+  it.each(['null', '[]', '1', '{}', '{"repo":1}', '{bad'])(
+    'rejects malformed persisted start options %s with a domain error',
+    async (options) => {
+      await approve()
+      db.db
+        .prepare('UPDATE worker_dispatches SET start_options = ? WHERE dispatch_id = ?')
+        .run(options, dispatch)
+      await expect(accept()).rejects.toMatchObject({ code: 'kernel_dispatch_mismatch' })
+    }
+  )
+  it.each([null, [], 1, {}, { acceptance: null }])(
+    'parses malformed cached replies %#',
+    async (reply) => {
+      await approve()
+      const request = {
+        id: 'bad-replay',
+        authToken: '',
+        method: 'orchestration.kernelAccept',
+        params: { run, from: proof.terminalHandle, task, dispatch, candidate },
+        orchestrationCompatibilityEvidence: proof
+      }
+      await expect(revalidateKernelAcceptanceReply(runtime, request, reply)).rejects.toMatchObject({
+        code: 'kernel_acceptance_invalid'
+      })
+    }
+  )
+  it('uses the exact request schema for both initial calls and cached reply validation', async () => {
+    const params = { run, from: proof.terminalHandle, task, dispatch, candidate, testsPassed: true }
+    const method = ORCHESTRATION_METHODS.find(
+      (entry) => entry.name === 'orchestration.kernelAccept'
+    )!
+    expect(() => method.params!.parse(params)).toThrow()
+    await expect(
+      revalidateKernelAcceptanceReply(
+        runtime,
+        { id: 'bad', authToken: '', method: method.name, params },
+        {}
+      )
+    ).rejects.toMatchObject({ code: 'kernel_acceptance_invalid' })
   })
 })

@@ -1,8 +1,19 @@
+import { deflateSync } from 'node:zlib'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, writeFile, rm, access, readFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  symlink,
+  realpath,
+  writeFile,
+  rm,
+  access,
+  readFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCandidateSnapshot } from './kernel-candidate-snapshot'
 import { AcceptanceChecks } from './kernel-acceptance-policy'
 import type { Plan } from './kernel-plan'
@@ -39,6 +50,7 @@ describe('Kernel acceptance real Git materialization', () => {
     }
   })
   afterEach(async () => {
+    vi.unstubAllEnvs()
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
   it('materializes exact raw bytes without checkout hooks and removes only its own detached worktree', async () => {
@@ -59,6 +71,32 @@ describe('Kernel acceptance real Git materialization', () => {
     }
     expect(git('rev-parse', 'HEAD')).toBe(candidate)
     expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1)
+  })
+
+  it('canonicalizes a real system-temp directory alias before ownership cleanup', async () => {
+    const target = join(root, 'real-temp'),
+      alias = join(root, 'temp-alias')
+    await mkdir(target)
+    await symlink(target, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    vi.stubEnv('TEMP', alias)
+    vi.stubEnv('TMP', alias)
+    vi.stubEnv('TMPDIR', alias)
+    const snapshot = await createCandidateSnapshot(root, candidate, plan)
+    expect(snapshot.path.startsWith(await realpath(target))).toBe(true)
+    await snapshot.verify()
+    await snapshot.cleanup()
+    expect(git('rev-parse', 'HEAD')).toBe(candidate)
+  })
+
+  it('refuses loose blob bytes that no longer match the fixed Git object ID', async () => {
+    const oid = git('rev-parse', `${candidate}:file.txt`)
+    const object = join(root, '.git', 'objects', oid.slice(0, 2), oid.slice(2))
+    await chmod(object, 0o644)
+    await writeFile(object, deflateSync(Buffer.from('blob 6\0forged')))
+    expect(git('cat-file', 'blob', oid)).toBe('forged')
+    await expect(createCandidateSnapshot(root, candidate, plan)).rejects.toMatchObject({
+      code: 'kernel_snapshot_unsupported'
+    })
   })
   it.each(['smudge', 'process'])(
     'rejects configured %s filter before invoking it',

@@ -1,3 +1,8 @@
+import {
+  StoredAcceptancePolicy,
+  AcceptedBinding,
+  readKernelAcceptanceRecord
+} from '../../orchestration/kernel-acceptance-policy'
 import { isDeepStrictEqual } from 'node:util'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { RpcRequest } from '../core'
@@ -16,10 +21,32 @@ import {
 } from '../../orchestration/kernel-candidate-acceptance'
 
 const Caller = { run: z.string().min(1), from: z.string().min(1) }
+const ApproveParams = z.object({ ...Caller, checks: z.unknown() }).strict()
+const AcceptParams = z
+  .object({
+    ...Caller,
+    task: z.string().min(1),
+    dispatch: z.string().min(1),
+    candidate: z.string().min(1)
+  })
+  .strict()
+const ApprovalReply = z.object({
+  status: z.literal('approved'),
+  policy: StoredAcceptancePolicy,
+  runGeneration: z.number().int()
+})
+const AcceptanceReply = z.object({ acceptance: AcceptedBinding })
+function parseBoundary<T>(schema: z.ZodType<T>, input: unknown): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new OrchestrationError('kernel_acceptance_invalid', 'Malformed Kernel request or reply.')
+  }
+  return parsed.data
+}
 export const ORCHESTRATION_KERNEL_ACCEPTANCE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.kernelApproveAcceptance',
-    params: z.object({ ...Caller, checks: z.unknown() }).strict(),
+    params: ApproveParams,
     handler: (params, ctx) =>
       approveKernelAcceptance(
         {
@@ -37,14 +64,7 @@ export const ORCHESTRATION_KERNEL_ACCEPTANCE_METHODS: RpcMethod[] = [
   }),
   defineMethod({
     name: 'orchestration.kernelAccept',
-    params: z
-      .object({
-        ...Caller,
-        task: z.string().min(1),
-        dispatch: z.string().min(1),
-        candidate: z.string().min(1)
-      })
-      .strict(),
+    params: AcceptParams,
     handler: (params, ctx) =>
       acceptKernelCandidate(
         {
@@ -76,14 +96,8 @@ export async function revalidateKernelAcceptanceReply(
   ) {
     return
   }
-  const params = request.params as {
-    run: string
-    from: string
-    task: string
-    dispatch: string
-    candidate: string
-  }
-  const context = {
+
+  const contextFor = (params: { run: string; from: string }) => ({
     runtime,
     authorize: () =>
       requireKernelCoordinator(
@@ -92,9 +106,7 @@ export async function revalidateKernelAcceptanceReply(
         params.from,
         request.orchestrationCompatibilityEvidence
       )
-  }
-  const run = context.authorize()
-  const reply = result as { policy?: unknown; runGeneration?: unknown; acceptance?: unknown }
+  })
   const reject = () => {
     throw new OrchestrationError(
       'kernel_acceptance_stale',
@@ -102,6 +114,9 @@ export async function revalidateKernelAcceptanceReply(
     )
   }
   if (request.method === 'orchestration.kernelApproveAcceptance') {
+    const params = parseBoundary(ApproveParams, request.params),
+      reply = parseBoundary(ApprovalReply, result)
+    const run = contextFor(params).authorize()
     if (
       run.consumer_generation !== reply.runGeneration ||
       !isDeepStrictEqual(readKernelRunConfig(run)?.acceptancePolicy, reply.policy)
@@ -110,10 +125,13 @@ export async function revalidateKernelAcceptanceReply(
     }
     return
   }
+  const params = parseBoundary(AcceptParams, request.params),
+    reply = parseBoundary(AcceptanceReply, result)
+  const context = contextFor(params)
   const initial = kernelAcceptanceBinding(context, params)
   const location = await kernelAcceptanceLocation(context, params, initial)
   const current = kernelAcceptanceBinding(context, params)
-  const stored = current.task.kernel_acceptance ? JSON.parse(current.task.kernel_acceptance) : null
+  const stored = readKernelAcceptanceRecord(current.task.kernel_acceptance)
   if (
     !stored ||
     stored.status !== 'accepted' ||

@@ -85,4 +85,28 @@ describe('Kernel acceptance native CLI routes', () => {
       code: 'kernel_acceptance_unsupported'
     })
   })
+  it.each([
+    null,
+    1,
+    [],
+    { acceptance: null },
+    { acceptance: [] },
+    { status: 'approved', policy: 1 }
+  ])('rejects malformed server payload %# explicitly', async (result) => {
+    const flags: [string, string][] = [
+      ['task', 'task_1'],
+      ['dispatch', 'ctx_1'],
+      ['candidate', 'a'.repeat(40)]
+    ]
+    const call = vi.fn().mockResolvedValue({ result })
+    await expect(invoke('kernel-accept', flags, call)).rejects.toMatchObject({
+      code: 'kernel_acceptance_unsupported'
+    })
+    directory = await mkdtemp(join(tmpdir(), 'orca-acceptance-bad-reply-'))
+    const file = join(directory, 'checks.json')
+    await writeFile(file, '{}')
+    await expect(
+      invoke('kernel-approve-acceptance', [['checks', file]], call)
+    ).rejects.toMatchObject({ code: 'kernel_acceptance_unsupported' })
+  })
 })

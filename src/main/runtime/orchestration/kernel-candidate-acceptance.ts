@@ -8,7 +8,11 @@ import {
   assertKernelTaskBindings,
   assertKernelRunOwner
 } from './kernel-run-config'
-import { AcceptanceChecks } from './kernel-acceptance-policy'
+import {
+  AcceptanceChecks,
+  parseKernelStartBinding,
+  readKernelAcceptanceRecord
+} from './kernel-acceptance-policy'
 import { reviewKernelCandidate } from './kernel-candidate-review'
 import {
   acceptanceEnvironment,
@@ -110,12 +114,7 @@ export function kernelAcceptanceBinding(context: Context, request: AcceptanceReq
   if (!check) {
     fail('kernel_policy_required', 'This Task has no approved check.')
   }
-  let options: { repo?: string; baseBranch?: string; worktree?: string }
-  try {
-    options = JSON.parse(worker.start_options)
-  } catch {
-    fail('kernel_dispatch_mismatch', 'Invalid stored start options.')
-  }
+  const options = parseKernelStartBinding(worker.start_options)
   if (
     options.repo !== `id:${config.repoId}` ||
     options.baseBranch !== config.plan.baseCommit ||
@@ -206,9 +205,7 @@ export async function acceptKernelCandidate(context: Context, request: Acceptanc
     if (current.stamp !== initial.stamp) {
       fail('kernel_acceptance_changed', 'Binding changed before reservation.')
     }
-    const previous = current.task.kernel_acceptance
-      ? JSON.parse(current.task.kernel_acceptance)
-      : null
+    const previous = readKernelAcceptanceRecord(current.task.kernel_acceptance)
     if (previous?.status === 'checking') {
       fail(
         'kernel_acceptance_busy',

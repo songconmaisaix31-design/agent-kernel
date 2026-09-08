@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, writeFile, readdir, lstat, rm, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve, isAbsolute } from 'node:path'
@@ -139,13 +140,20 @@ export async function createCandidateSnapshot(repo: string, candidate: string, p
     if (!Buffer.isBuffer(stdout)) {
       fail('Raw Git blob capture did not return bytes.')
     }
+    const oid = createHash(entry.oid.length === 40 ? 'sha1' : 'sha256')
+      .update(`blob ${stdout.length}\0`)
+      .update(stdout)
+      .digest('hex')
+    if (oid !== entry.oid) {
+      fail('Git blob bytes do not match the fixed object ID.')
+    }
     total += stdout.length
     if (total > MAX_BYTES) {
       fail('The complete snapshot exceeds 16 MiB.')
     }
     contents.set(path, stdout)
   }
-  const root = await mkdtemp(join(tmpdir(), 'orca-kernel-acceptance-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'orca-kernel-acceptance-')))
   const path = join(root, 'candidate')
   let registered = false
   let marker: Buffer | undefined
