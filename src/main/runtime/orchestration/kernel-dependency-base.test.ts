@@ -1,3 +1,4 @@
+import { addWorktree } from '../../git/worktree'
 import { prepareKernelWorkerStart } from '../rpc/methods/orchestration-kernel-admission'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -14,7 +15,7 @@ import type { Plan } from './kernel-plan'
 import { readKernelRunConfig } from './kernel-run-config'
 import { kernelDependencyBase } from './kernel-dependency-base'
 
-// Real registered handlers, SQLite, Git worktrees and verifier processes; terminal/Agent and resource-service observations are substitutes.
+// Real handlers, SQLite, Orca addWorktree and verifier processes; runtime resource observations and terminal/Agent are substitutes.
 describe('Kernel single accepted dependency execution base', () => {
   const pane = 'tab_coord:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const proof = { terminalHandle: 'term_coord', paneKey: pane, launchToken: 'dependency-proof' }
@@ -157,7 +158,7 @@ describe('Kernel single accepted dependency execution base', () => {
     vi.spyOn(runtime, 'createManagedWorktree').mockImplementation(async (args) => {
       const id = `created-${worktrees.size}`,
         path = join(root, id)
-      git(repo, 'worktree', 'add', '--detach', path, args.baseBranch!)
+      await addWorktree(repo, path, id, args.baseBranch)
       const worktree = { id, repoId: 'repo', path }
       worktrees.set(id, worktree)
       return { worktree, startupTerminal: { spawned: true, handle: `term_${id}` } } as never
