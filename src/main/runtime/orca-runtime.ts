@@ -29706,11 +29706,15 @@ export class OrcaRuntimeService {
 
   private async stopExplicitlyClosedTabPtys(
     ptyIds: readonly string[],
-    addressedPtyId: string
+    addressedPtyId: string,
+    supervisedGuard?: () => boolean
   ): Promise<boolean> {
     let addressedPtyStopped = false
     const deadlineMs = Date.now() + EXPLICIT_TERMINAL_CLOSE_STOP_TIMEOUT_MS
     for (const ptyId of ptyIds) {
+      if (supervisedGuard && (ptyId !== addressedPtyId || !supervisedGuard())) {
+        return false
+      }
       // Why here: this is the single funnel for an explicit close, and the
       // intent must be on record before the stop, since the provider may report
       // the exit itself with a status that reads like a natural finish.
@@ -29731,6 +29735,9 @@ export class OrcaRuntimeService {
             verdict?.status === 'unverifiable' &&
             verdict.reason === SSH_PROVIDER_UNREGISTERED_REASON
           if (!providerAlreadyRetiredPty) {
+            if (supervisedGuard && !supervisedGuard()) {
+              return false
+            }
             this.ptyController.kill(ptyId)
             if (!verdict || verdict.status === 'live') {
               this.markPtyLivenessUnverifiable(
@@ -29917,8 +29924,72 @@ export class OrcaRuntimeService {
     })
   }
 
-  async closeTerminal(handle: string): Promise<RuntimeTerminalClose> {
+  captureSupervisedTerminalCloseGuard(handle: string, isCurrent: () => boolean): () => boolean {
+    const authority = this.getOrchestrationDispatchAuthority(handle)
+    const pty = authority ? this.ptysById.get(authority.ptyId) : undefined
+    const controller = this.ptyController
+    const connectionId = pty?.connectionId
+    const provider = connectionId ? this.getSshProviderFn?.(connectionId) : this.getLocalProvider()
+    const generation =
+      provider && 'providerGeneration' in provider ? provider.providerGeneration : null
+    const incarnationId = pty?.incarnationId
+    return () => {
+      try {
+        const current = this.getOrchestrationDispatchAuthority(handle)
+        const currentProvider = connectionId
+          ? this.getSshProviderFn?.(connectionId)
+          : this.getLocalProvider()
+        return Boolean(
+          authority?.paneKey &&
+          authority.processIncarnation &&
+          pty &&
+          incarnationId &&
+          controller &&
+          provider &&
+          current &&
+          this.ptyController === controller &&
+          currentProvider === provider &&
+          (!connectionId ||
+            (typeof generation === 'number' &&
+              generation > 0 &&
+              'providerGeneration' in provider &&
+              provider.providerGeneration === generation)) &&
+          provider.hasPty?.(authority.ptyId) === true &&
+          this.ptysById.get(authority.ptyId) === pty &&
+          pty.incarnationId === incarnationId &&
+          current.ptyId === authority.ptyId &&
+          current.paneKey === authority.paneKey &&
+          current.processIncarnation === authority.processIncarnation &&
+          current.worktreeId === authority.worktreeId &&
+          JSON.stringify(current.hostScope) === JSON.stringify(authority.hostScope) &&
+          isCurrent()
+        )
+      } catch {
+        return false
+      }
+    }
+  }
+
+  async closeTerminal(
+    handle: string,
+    supervised?: { isCurrent: () => boolean }
+  ): Promise<RuntimeTerminalClose & { supervisedCloseRejected?: true }> {
     const pty = this.getLivePtyForHandle(handle)
+    const guard = supervised
+      ? this.captureSupervisedTerminalCloseGuard(handle, supervised.isCurrent)
+      : undefined
+    if (guard && !guard()) {
+      return {
+        ...this.describeTerminalClose(
+          handle,
+          pty?.pty.tabId ?? '',
+          pty?.pty.ptyId ?? null,
+          false,
+          guard
+        ),
+        supervisedCloseRejected: true
+      }
+    }
     this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
     if (pty) {
       // Why: PTY exit can immediately replace a ready SSH publication with a pending one, so capture its durable HUB surface before killing it.
@@ -29928,11 +29999,29 @@ export class OrcaRuntimeService {
           : null) ?? this.findMobileTerminalSurfaceForPty(pty.pty.worktreeId, pty.pty.ptyId)
       const tabId = surface?.tab.parentTabId ?? pty.pty.tabId ?? pty.record.tabId
       // Why: relay recovery can leave stale renderer leaves; the persisted HUB layout defines whether closing this PTY closes the whole surface.
-      const siblingCount = surface?.tab.parentLayout
+      const layoutSiblingCount = surface?.tab.parentLayout
         ? countTerminalLayoutLeaves(surface.tab.parentLayout.root)
         : this.countLeavesInTab(tabId)
+      const siblingCount = guard
+        ? Math.max(
+            layoutSiblingCount,
+            this.getPtyIdsForExplicitTabClose(pty.pty.worktreeId, tabId).length
+          )
+        : layoutSiblingCount
+      // Supervised closes cannot enter mobile retirement's unguarded headless fallback.
+      if (guard && siblingCount <= 1 && this.notifier?.closeTerminalTab) {
+        await this.notifier.closeTerminalTab(tabId, { localPtyTeardownOwnedExternally: true })
+        const ptyKilled = await this.stopExplicitlyClosedTabPtys(
+          [pty.pty.ptyId],
+          pty.pty.ptyId,
+          guard
+        )
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled, guard)
+      }
       if (siblingCount <= 1 && surface && this.tabs.has(tabId) && this.notifier?.closeTerminalTab) {
-        const ptyIdsToKill = this.getPtyIdsForExplicitTabClose(pty.pty.worktreeId, tabId)
+        const ptyIdsToKill = guard
+          ? [pty.pty.ptyId]
+          : this.getPtyIdsForExplicitTabClose(pty.pty.worktreeId, tabId)
         try {
           await this.closeMobileSessionTab(`id:${pty.pty.worktreeId}`, tabId, {
             localPtyTeardownOwnedExternally: true
@@ -29943,16 +30032,25 @@ export class OrcaRuntimeService {
           }
           this.notifier.closeTerminal?.(tabId)
         }
-        const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId)
-        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
+        const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId, guard)
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled, guard)
       }
       if (siblingCount <= 1 && !surface && pty.pty.tabId && this.notifier?.closeTerminalTab) {
-        const ptyIdsToKill = this.getPtyIdsForExplicitTabClose(pty.pty.worktreeId, tabId)
+        const ptyIdsToKill = guard
+          ? [pty.pty.ptyId]
+          : this.getPtyIdsForExplicitTabClose(pty.pty.worktreeId, tabId)
         await this.notifier.closeTerminalTab(tabId, { localPtyTeardownOwnedExternally: true })
-        const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId)
-        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
+        const ptyKilled = await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, pty.pty.ptyId, guard)
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled, guard)
       }
-      const ptyKilled = await this.stopExplicitlyClosedTabPtys([pty.pty.ptyId], pty.pty.ptyId)
+      const ptyKilled = await this.stopExplicitlyClosedTabPtys(
+        [pty.pty.ptyId],
+        pty.pty.ptyId,
+        guard
+      )
+      if (guard) {
+        return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled, guard)
+      }
       if (!ptyKilled || siblingCount <= 1) {
         if (surface) {
           // Why: paired viewers keep ended streams mounted until the HUB publishes removal, so explicit close uses the durable host-tab transaction instead of viewer-local exit handling.
@@ -29968,14 +30066,19 @@ export class OrcaRuntimeService {
           this.notifier?.closeTerminal(tabId)
         }
       }
-      return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled)
+      return this.describeTerminalClose(handle, tabId, pty.pty.ptyId, ptyKilled, guard)
     }
     this.assertGraphReady()
     const { leaf } = this.getLiveLeafForHandle(handle)
     // Why: in a multi-pane tab, killing the PTY is enough (renderer's exit handler closes the pane); an extra IPC close would race it and close the whole tab.
-    const siblingCount = this.countLeavesInTab(leaf.tabId)
+    const siblingCount = guard
+      ? Math.max(
+          this.countLeavesInTab(leaf.tabId),
+          this.getPtyIdsForExplicitTabClose(leaf.worktreeId, leaf.tabId).length
+        )
+      : this.countLeavesInTab(leaf.tabId)
     const ptyIdsToKill =
-      siblingCount <= 1
+      !guard && siblingCount <= 1
         ? this.getPtyIdsForExplicitTabClose(leaf.worktreeId, leaf.tabId)
         : leaf.ptyId
           ? [leaf.ptyId]
@@ -29986,12 +30089,15 @@ export class OrcaRuntimeService {
       })
     }
     const ptyKilled = leaf.ptyId
-      ? await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, leaf.ptyId)
+      ? await this.stopExplicitlyClosedTabPtys(ptyIdsToKill, leaf.ptyId, guard)
       : false
+    if (guard) {
+      return this.describeTerminalClose(handle, leaf.tabId, leaf.ptyId ?? null, ptyKilled, guard)
+    }
     if (siblingCount > 1 ? !ptyKilled : !this.notifier?.closeTerminalTab) {
       this.notifier?.closeTerminal(leaf.tabId, leaf.paneRuntimeId)
     }
-    return this.describeTerminalClose(handle, leaf.tabId, leaf.ptyId ?? null, ptyKilled)
+    return this.describeTerminalClose(handle, leaf.tabId, leaf.ptyId ?? null, ptyKilled, guard)
   }
 
   /**
@@ -30002,8 +30108,19 @@ export class OrcaRuntimeService {
     handle: string,
     tabId: string,
     ptyId: string | null,
-    ptyKilled: boolean
+    ptyKilled: boolean,
+    supervisedGuard?: () => boolean
   ): RuntimeTerminalClose {
+    if (!ptyKilled && supervisedGuard && !supervisedGuard()) {
+      return {
+        handle,
+        tabId,
+        ptyKilled: false,
+        ptyStopVerdict: 'unverifiable',
+        ptyStopReason:
+          'the supervised process, provider, or Dispatch ownership could not be revalidated'
+      }
+    }
     if (ptyKilled || !ptyId) {
       return { handle, tabId, ptyKilled }
     }

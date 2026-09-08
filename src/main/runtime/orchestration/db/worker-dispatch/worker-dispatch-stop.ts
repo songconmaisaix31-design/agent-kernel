@@ -33,6 +33,7 @@ export function beginWorkerStop(
 ):
   | { disposition: 'stopping'; worker: WorkerDispatchRow; dispatch: DispatchContextRow }
   | { disposition: 'already_settled'; worker: WorkerDispatchRow; dispatch: DispatchContextRow }
+  | { disposition: 'in_progress'; worker: WorkerDispatchRow; dispatch: DispatchContextRow }
   | ({ disposition: 'context_only' } & ContextOnlyDispatchReleaseResult) {
   this.db.exec('BEGIN IMMEDIATE')
   try {
@@ -49,11 +50,21 @@ export function beginWorkerStop(
       this.db.exec('COMMIT')
       return { disposition: 'context_only', ...released }
     }
-    if (['succeeded', 'failed', 'stopped', 'abandoned'].includes(worker.state)) {
+    const failedStart =
+      worker.state === 'failed' &&
+      worker.stage !== 'settled' &&
+      dispatch.status === 'failed' &&
+      !this.getFederatedDispatch(dispatchId) &&
+      this.getDispatchContext(dispatch.task_id)?.id === dispatchId
+    if (['stopping', 'stop_unknown'].includes(worker.state)) {
+      this.db.exec('COMMIT')
+      return { disposition: 'in_progress', worker, dispatch }
+    }
+    if (!failedStart && ['succeeded', 'failed', 'stopped', 'abandoned'].includes(worker.state)) {
       this.db.exec('COMMIT')
       return { disposition: 'already_settled', worker, dispatch }
     }
-    if (!['ready', 'start_unknown'].includes(worker.state)) {
+    if (!failedStart && !['ready', 'start_unknown'].includes(worker.state)) {
       throw new OrchestrationError(
         'dispatch_inactive',
         `Dispatch ${dispatchId} cannot stop from ${worker.state}.`
@@ -62,11 +73,12 @@ export function beginWorkerStop(
     this.db
       .prepare(
         `UPDATE worker_dispatches
-         SET state = 'stopping', stage = 'stop_requested',
+         SET state = 'stopping', stage = CASE WHEN state = 'failed' THEN stage ELSE 'stop_requested' END,
              runtime_epoch = COALESCE(?, runtime_epoch), updated_at = datetime('now')
-         WHERE dispatch_id = ? AND state IN ('ready', 'start_unknown')`
+         WHERE dispatch_id = ? AND (state IN ('ready', 'start_unknown') OR
+           (state = 'failed' AND stage != 'settled' AND ? = 1))`
       )
-      .run(runtimeEpoch, dispatchId)
+      .run(runtimeEpoch, dispatchId, failedStart ? 1 : 0)
     this.db
       .prepare(
         `UPDATE dispatch_contexts
@@ -74,7 +86,9 @@ export function beginWorkerStop(
          WHERE id = ?`
       )
       .run(dispatchId)
-    reconcileTaskAfterDispatchInterruption(this, dispatch.task_id, dispatchId)
+    if (!failedStart) {
+      reconcileTaskAfterDispatchInterruption(this, dispatch.task_id, dispatchId)
+    }
     this.closeQuestionsForDispatch(dispatchId)
     this.db.exec('COMMIT')
     return {
@@ -99,7 +113,9 @@ export function settleWorkerStop(this: OrchestrationDb, dispatchId: string): Wor
     this.db
       .prepare(
         `UPDATE worker_dispatches
-         SET state = 'stopped', stage = 'process_stopped', updated_at = datetime('now')
+         SET state = 'stopped', stage = CASE WHEN EXISTS (
+           SELECT 1 FROM dispatch_contexts WHERE id = dispatch_id AND status = 'failed'
+         ) THEN stage ELSE 'process_stopped' END, updated_at = datetime('now')
          WHERE dispatch_id = ? AND state = 'stopping'`
       )
       .run(dispatchId)
@@ -110,7 +126,9 @@ export function settleWorkerStop(this: OrchestrationDb, dispatchId: string): Wor
          WHERE id = ? AND status IN ('pending', 'dispatched')`
       )
       .run(dispatchId)
-    reconcileTaskAfterDispatchInterruption(this, dispatch.task_id, dispatchId)
+    if (dispatch.status !== 'failed') {
+      reconcileTaskAfterDispatchInterruption(this, dispatch.task_id, dispatchId)
+    }
     this.db.exec('COMMIT')
     return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
   } catch (error) {
@@ -209,11 +227,13 @@ export function markWorkerStopUnknown(
   this.db
     .prepare(
       `UPDATE worker_dispatches
-       SET state = 'stop_unknown', stage = 'stop_outcome_unknown', last_error = ?,
+       SET state = 'stop_unknown',
+           stage = CASE WHEN ? THEN stage ELSE 'stop_outcome_unknown' END,
+           last_error = ?,
            updated_at = datetime('now')
        WHERE dispatch_id = ? AND state = 'stopping'`
     )
-    .run(reason, dispatchId)
+    .run(this.getDispatchContextById(dispatchId)?.status === 'failed' ? 1 : 0, reason, dispatchId)
   return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
 }
 

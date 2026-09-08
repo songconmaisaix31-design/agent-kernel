@@ -14,10 +14,19 @@ describe('worker-stop against a terminal we lost contact with', () => {
     db = new OrchestrationDb(':memory:')
     runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
+    vi.spyOn(runtime, 'captureSupervisedTerminalCloseGuard').mockImplementation(
+      (_handle, isCurrent) => isCurrent
+    )
     vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue(
       'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
     )
     vi.spyOn(runtime, 'getTerminalProcessIncarnation').mockReturnValue('runtime:pty:1')
+    vi.spyOn(runtime, 'getOrchestrationDispatchAuthority').mockReturnValue({
+      terminalHandle: 'term_worker',
+      paneKey: 'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      processIncarnation: 'runtime:pty:1',
+      hostScope: { kind: 'local', hostId: 'local' }
+    } as never)
     vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
       handle: 'term_worker',
       worktreeId: 'repo::worktree',
@@ -56,7 +65,8 @@ describe('worker-stop against a terminal we lost contact with', () => {
       worktreeId: 'repo::worktree',
       setupState: 'not_applicable',
       effects: [{ kind: 'terminal', action: 'created', id: 'term_worker' }],
-      terminalOwnership: 'created'
+      terminalOwnership: 'created',
+      hostScope: JSON.stringify({ kind: 'local', hostId: 'local' })
     })
     db.markWorkerDispatchReady(started.dispatch.id)
     return started.dispatch
@@ -92,7 +102,7 @@ describe('worker-stop against a terminal we lost contact with', () => {
       lastError: string
     }
     // Losing contact is a reason to report honestly, never to stop trying.
-    expect(closeTerminal).toHaveBeenCalledWith('term_worker')
+    expect(closeTerminal).toHaveBeenCalledWith('term_worker', { isCurrent: expect.any(Function) })
     expect(stopped.processAction).toBe('closed_agent_terminal')
     expect(stopped.state).toBe('stop_unknown')
     expect(stopped.lastError).toContain('could not be confirmed stopped')
