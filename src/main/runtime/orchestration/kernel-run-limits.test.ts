@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { OrchestrationDb } from './db'
 import { configureKernelRun, readKernelRunConfig } from './kernel-run-config'
 import type { Plan } from './kernel-plan'
+import { kernelOccupiedSlots } from './kernel-run-limits'
 
 describe('Kernel Run resource limits', () => {
   let db: OrchestrationDb
@@ -48,6 +49,221 @@ describe('Kernel Run resource limits', () => {
       retryOf
     })
   }
+
+  function releasedFailedStart() {
+    configure({ maxConcurrentWorkers: 1 })
+    const { dispatch } = start(0)
+    const worktreeId = 'repo::/worktrees/failed-start'
+    const effects = [
+      { kind: 'worktree', action: 'created_top_level', id: worktreeId },
+      {
+        kind: 'terminal',
+        role: 'agent',
+        action: 'reused_agent_terminal',
+        id: 'term_failed',
+        tabId: 'tab_failed',
+        leafId: 'leaf_failed'
+      }
+    ]
+    db.prepareStartingWorkerAuthority({
+      dispatchId: dispatch.id,
+      handle: 'term_failed',
+      paneKey: 'pane_failed',
+      processIncarnation: 'process_failed',
+      worktreeId,
+      effects,
+      setupState: 'skipped',
+      terminalOwnership: 'created'
+    })
+    db.failWorkerStart(dispatch.id, 'dispatch_input', 'agent_prompt_stalled')
+    db.beginWorkerStop(dispatch.id, 'runtime_test')
+    db.settleWorkerStop(dispatch.id)
+    const resource = db.getWorkerTerminalResourceByOwner(dispatch.id)!
+    expect(
+      db.settleDeadWorkerTerminalRelease({
+        requestingDispatchId: dispatch.id,
+        resourceId: resource.id,
+        processIncarnation: 'process_failed'
+      }).disposition
+    ).toBe('released')
+    return { dispatchId: dispatch.id, resourceId: resource.id, effects, worktreeId }
+  }
+
+  it('reconfigures after exact native release of failed-start residuals', () => {
+    const { dispatchId } = releasedFailedStart()
+    const worker = db.getWorkerDispatch(dispatchId)
+    const dispatch = db.getDispatchContextById(dispatchId)
+    expect(dispatch?.capability_revoked_at).not.toBeNull()
+    expect(() => configure({ maxConcurrentWorkers: 1, maxAttempts: 4 })).not.toThrow()
+    expect(kernelOccupiedSlots(db, runId)).toBe(0)
+    expect(db.getWorkerDispatch(dispatchId)).toEqual(worker)
+    expect(db.getDispatchContextById(dispatchId)).toEqual(dispatch)
+  })
+
+  it('admits the next Task after exact release while preserving failed-start history', () => {
+    const { dispatchId } = releasedFailedStart()
+    expect(() => start(1)).not.toThrow()
+    expect(db.getWorkerDispatch(dispatchId)).toMatchObject({
+      state: 'stopped',
+      stage: 'dispatch_input',
+      last_error: 'agent_prompt_stalled'
+    })
+    expect(db.db.prepare('SELECT COUNT(*) AS n FROM dispatch_contexts').get()).toEqual({ n: 2 })
+  })
+
+  function expectResidualBlocked() {
+    expect(kernelOccupiedSlots(db, runId)).toBe(1)
+    expect(() => configure()).toThrow(/Stop or release existing Run resources/)
+    expect(() => start(1)).toThrow(/concurrent Worker limit/)
+    expect(db.getDispatchContext(plan.tasks[1].key)).toBeUndefined()
+  }
+
+  it.each([
+    '{',
+    'null',
+    '{}',
+    '"[]"',
+    '[null]',
+    '[[]]',
+    '[1]',
+    '[{}]',
+    '[{"kind":"unknown","id":"term_failed"}]',
+    '[{"kind":"worktree"}]',
+    '[{"kind":"terminal"}]',
+    '[{"kind":"terminal","id":"term_failed","action":"created"}]',
+    '[{"kind":"terminal","id":"term_failed","role":"setup","action":"created"}]',
+    '[{"kind":"worktree","id":"repo::/worktrees/failed-start","action":"unknown"}]'
+  ])('blocks malformed or unknown residuals despite release: %s', (residuals) => {
+    const { dispatchId } = releasedFailedStart()
+    db.db
+      .prepare('UPDATE worker_dispatches SET residual_resources = ? WHERE dispatch_id = ?')
+      .run(residuals, dispatchId)
+    expectResidualBlocked()
+  })
+
+  it.each(['terminal', 'worktree', 'unknown'])(
+    'checks every residual including an additional unmapped %s',
+    (kind) => {
+      const { dispatchId, effects } = releasedFailedStart()
+      db.db
+        .prepare('UPDATE worker_dispatches SET residual_resources = ? WHERE dispatch_id = ?')
+        .run(JSON.stringify([...effects, { ...effects[1], kind, id: 'unmapped' }]), dispatchId)
+      expectResidualBlocked()
+    }
+  )
+
+  it('allows repeated receipts for the same released terminal and preserves the parent artifact', () => {
+    const { dispatchId, effects, worktreeId } = releasedFailedStart()
+    const residuals = JSON.stringify([...effects, effects[1]])
+    db.db
+      .prepare('UPDATE worker_dispatches SET residual_resources = ? WHERE dispatch_id = ?')
+      .run(residuals, dispatchId)
+    configure()
+    expect(() => start(1)).not.toThrow()
+    expect(db.getWorkerDispatch(dispatchId)).toMatchObject({
+      worktree_id: worktreeId,
+      residual_resources: residuals
+    })
+  })
+
+  it.each([
+    ['ownership_state', 'owned'],
+    ['ownership_state', 'external'],
+    ['ownership_state', 'user_owned'],
+    ['ownership_state', 'transferred'],
+    ['release_state', 'retained'],
+    ['release_state', 'unknown'],
+    ['release_state', 'requested'],
+    ['release_state', 'releasing'],
+    ['release_state', 'not_requested'],
+    ['terminal_handle', 'different_terminal'],
+    ['worktree_id', 'repo::different'],
+    ['worktree_id', null],
+    ['pane_key', 'different_pane'],
+    ['pane_key', null],
+    ['process_incarnation', 'different_process'],
+    ['process_incarnation', null],
+    ['host_scope', 'ssh:other-host']
+  ])('blocks released-resource inconsistency %s=%s', (column, value) => {
+    const { resourceId } = releasedFailedStart()
+    db.db
+      .prepare(`UPDATE worker_terminal_resources SET ${column} = ? WHERE id = ?`)
+      .run(value, resourceId)
+    expectResidualBlocked()
+  })
+
+  it.each(['owner_dispatch_id', 'origin_dispatch_id'])(
+    'cannot use release associated with a different %s',
+    (column) => {
+      const { dispatchId, resourceId } = releasedFailedStart()
+      const other = start(1)
+      db.failWorkerStart(other.dispatch.id, 'worktree', 'No resources')
+      db.db
+        .prepare(`UPDATE worker_terminal_resources SET ${column} = ? WHERE id = ?`)
+        .run(other.dispatch.id, resourceId)
+      expect(kernelOccupiedSlots(db, runId)).toBe(1)
+      expect(() => configure()).toThrow(/Stop or release existing Run resources/)
+      expect(() => start(2)).toThrow(/concurrent Worker limit/)
+      expect(db.getWorkerDispatch(dispatchId)?.residual_resources).not.toBe('[]')
+    }
+  )
+
+  it('blocks residuals without a native resource mapping', () => {
+    const { resourceId } = releasedFailedStart()
+    db.db.prepare('DELETE FROM worker_terminal_resources WHERE id = ?').run(resourceId)
+    expectResidualBlocked()
+  })
+
+  it.each(['starting', 'ready', 'stopping', 'start_unknown', 'stop_unknown'])(
+    'released receipts cannot override Worker state %s',
+    (state) => {
+      const { dispatchId } = releasedFailedStart()
+      db.db
+        .prepare('UPDATE worker_dispatches SET state = ? WHERE dispatch_id = ?')
+        .run(state, dispatchId)
+      expectResidualBlocked()
+    }
+  )
+
+  it.each(['pending', 'dispatched'])(
+    'released receipts cannot override Dispatch status %s',
+    (status) => {
+      const { dispatchId } = releasedFailedStart()
+      db.db.prepare('UPDATE dispatch_contexts SET status = ? WHERE id = ?').run(status, dispatchId)
+      expectResidualBlocked()
+    }
+  )
+
+  it.each(['folder:workspace', 'unproven-workspace'])(
+    'does not discharge unsupported workspace residuals: %s',
+    (worktreeId) => {
+      const { dispatchId, resourceId, effects } = releasedFailedStart()
+      db.db
+        .prepare('UPDATE worker_terminal_resources SET worktree_id = ? WHERE id = ?')
+        .run(worktreeId, resourceId)
+      db.db
+        .prepare(
+          'UPDATE worker_dispatches SET worktree_id = ?, residual_resources = ? WHERE dispatch_id = ?'
+        )
+        .run(
+          worktreeId,
+          JSON.stringify([{ ...effects[0], id: worktreeId }, effects[1]]),
+          dispatchId
+        )
+      expectResidualBlocked()
+    }
+  )
+
+  it.each(['task', 'run'])('released failed starts still exhaust the %s attempt cap', (cap) => {
+    const { dispatchId } = releasedFailedStart()
+    configure(cap === 'task' ? { maxAttemptsPerTask: 1 } : { maxAttempts: 1 })
+    expect(() => (cap === 'task' ? start(0, dispatchId) : start(1))).toThrow(
+      cap === 'task'
+        ? /Task has reached its attempt limit/
+        : /Run has reached its cumulative attempt limit/
+    )
+    expect(db.db.prepare('SELECT COUNT(*) AS n FROM dispatch_contexts').get()).toEqual({ n: 1 })
+  })
 
   it('defaults to two concurrent workers and rejects the third in the native transaction', () => {
     configure()
