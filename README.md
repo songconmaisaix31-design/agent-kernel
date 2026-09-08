@@ -1,3 +1,18 @@
+> **Agent Kernel — Orca-Kernel v0.1 开发预览 / development preview**
+>
+> This independent repository continues the Kernel work from
+> [the original Fork](https://github.com/songconmaisaix31-design/orca-kernel),
+> preserving [Orca](https://github.com/stablyai/orca) history, authors and the
+> [MIT license](LICENSE). The upstream baseline remains **v1.4.188**.
+>
+> A real candidate coordinator, persisted Kernel plan, one Worker artifact and
+> one trusted acceptance have been demonstrated. The failed-start stop fix has
+> local regression coverage; real stop, parent-to-consumer dependency execution
+> and combined integration remain unverified. Historical acceptance is not reusable
+> cross-Run authority. CURRENT/KERNEL formal comparisons have not run.
+> See [current status](V01-TODO.md) and [implementation and validation](docs/ORCA-INTEGRATION.md).
+> Upstream features and download links below describe Orca, not a released Kernel build.
+
 <h1 align="center">
   <a href="https://onOrca.dev"><img src="resources/build/icon.png" alt="Orca" width="64" valign="middle" /></a> Orca
 </h1>
