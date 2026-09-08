@@ -1,3 +1,4 @@
+import { revalidateKernelAcceptanceReply } from './methods/orchestration-kernel-acceptance'
 import { createHash } from 'node:crypto'
 import { isOrchestrationMutation } from '../../../shared/orchestration-rpc-contract'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
@@ -42,6 +43,10 @@ export class OrchestrationMutationExecutor {
         )
       )
       .digest('hex')
+    const checkedReply = async (result: unknown): Promise<unknown> => {
+      await revalidateKernelAcceptanceReply(this.runtime, request, result)
+      return attachMutationReceipt(result, requestId, true)
+    }
     const key = `${callerFingerprint}:${requestId}`
     const db = this.runtime.getOrchestrationDb()
     const identity = { callerFingerprint, requestId, method: request.method, payloadHash }
@@ -69,14 +74,14 @@ export class OrchestrationMutationExecutor {
     if (begun.disposition === 'completed') {
       const active = this.inFlight.get(key)
       if (active) {
-        return attachMutationReceipt(await active, requestId, true)
+        return await checkedReply(await active)
       }
-      return attachMutationReceipt(JSON.parse(begun.row.receipt ?? 'null'), requestId, true)
+      return await checkedReply(JSON.parse(begun.row.receipt ?? 'null'))
     }
     if (begun.disposition === 'pending') {
       const active = this.inFlight.get(key)
       if (active) {
-        return attachMutationReceipt(await active, requestId, true)
+        return await checkedReply(await active)
       }
       if (request.method !== 'orchestration.workerRelease') {
         const recovery = getPendingWorkerStartRecovery(request.method, begun.row.receipt)

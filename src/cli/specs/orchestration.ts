@@ -4,6 +4,24 @@ import { ORCHESTRATION_WORKER_COMMAND_SPECS } from './orchestration-worker-specs
 
 export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
   {
+    path: ['orchestration', 'kernel-approve-acceptance'],
+    summary: 'Approve trusted per-Task Node checks on a managed Run',
+    usage:
+      'orca orchestration kernel-approve-acceptance --run <id> --checks <json-file> [--from <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'run', 'checks', 'from'],
+    notes: [
+      'Explicitly approves executable Node source, not a sandbox. Plan.acceptance is never executed.'
+    ]
+  },
+  {
+    path: ['orchestration', 'kernel-accept'],
+    summary: 'Check and accept the fixed candidate of a successful supervised Dispatch',
+    usage:
+      'orca orchestration kernel-accept --run <id> --task <id> --dispatch <id> --candidate <full-sha> [--from <handle>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'run', 'task', 'dispatch', 'candidate', 'from'],
+    notes: ['Native Git only. Accepted does not mean integrated.']
+  },
+  {
     path: ['orchestration', 'run-create'],
     summary: 'Create and bind a lightweight orchestration Run',
     usage:

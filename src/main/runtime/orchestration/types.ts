@@ -259,6 +259,7 @@ export type TaskRow = {
   status: TaskStatus
   deps: string
   result: string | null
+  kernel_acceptance?: string | null
   created_at: string
   completed_at: string | null
 }

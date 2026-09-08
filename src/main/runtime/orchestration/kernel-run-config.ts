@@ -1,3 +1,4 @@
+import { StoredAcceptancePolicy, type AcceptancePolicy } from './kernel-acceptance-policy'
 import type { OrchestrationDb } from './db'
 import { validatePlan, type Plan } from './kernel-plan'
 import { OrchestrationError } from './orchestration-error'
@@ -16,6 +17,7 @@ export type KernelRunConfig = {
   plan: Plan
   owner?: KernelOwner
   limits: KernelLimits
+  acceptancePolicy?: AcceptancePolicy
 }
 
 export function parseKernelRunConfig(input: unknown, defaultMaxAttempts?: number): KernelRunConfig {
@@ -24,7 +26,9 @@ export function parseKernelRunConfig(input: unknown, defaultMaxAttempts?: number
   }
   const value = input as Record<string, unknown>
   if (
-    Object.keys(value).some((key) => !['repoId', 'plan', 'owner', 'limits'].includes(key)) ||
+    Object.keys(value).some(
+      (key) => !['repoId', 'plan', 'owner', 'limits', 'acceptancePolicy'].includes(key)
+    ) ||
     typeof value.repoId !== 'string' ||
     !value.repoId.trim() ||
     value.repoId !== value.repoId.trim()
@@ -64,7 +68,15 @@ export function parseKernelRunConfig(input: unknown, defaultMaxAttempts?: number
       paneKey: candidate.paneKey as string
     }
   }
+  const policy =
+    value.acceptancePolicy === undefined
+      ? undefined
+      : StoredAcceptancePolicy.safeParse(value.acceptancePolicy)
+  if (policy && !policy.success) {
+    throw new OrchestrationError('kernel_policy_invalid', 'Stored acceptance policy is invalid.')
+  }
   return {
+    ...(policy?.success ? { acceptancePolicy: policy.data } : {}),
     repoId: value.repoId,
     plan: checked.plan,
     ...(owner ? { owner } : {}),
@@ -217,8 +229,11 @@ export function configureKernelRun(
   expectedRun: RunRow,
   input: unknown
 ): RunRow {
-  if (input && typeof input === 'object' && 'owner' in input) {
-    throw new OrchestrationError('kernel_config_invalid', 'Kernel owner is assigned by the server.')
+  if (input && typeof input === 'object' && ('owner' in input || 'acceptancePolicy' in input)) {
+    throw new OrchestrationError(
+      'kernel_config_invalid',
+      'Kernel owner and acceptance policy are assigned through verified server approval.'
+    )
   }
   let config = input === null ? null : parseKernelRunConfig(input)
   db.db.exec('BEGIN IMMEDIATE')

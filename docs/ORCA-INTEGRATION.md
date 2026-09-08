@@ -1,3 +1,27 @@
+## P1：受信成果接纳入口（2026-09-08）
+
+当前入口为 `orchestration.kernelApproveAcceptance` / `orchestration.kernelAccept`，复用已验证协调者的 Run fencing、服务端计划、原 Task/监督 Dispatch、既有 Git/进程执行器及 SQLite。原生 `completed`、Worker 自报和 `scope-checked` 均不能写入 `tasks.kernel_acceptance` 的 accepted；普通 TaskStatus/result 保持原义。下文历史批次的“未实现”描述保留其原时间口径。
+
+```text
+orca orchestration kernel-approve-acceptance --run <run_id> --from <coordinator> --checks <checks.json>
+orca orchestration kernel-accept --run <run_id> --from <coordinator> --task <task_id> --dispatch <dispatch_id> --candidate <full_sha>
+```
+
+`checks.json` 是协调者显式批准的独立检查源码，例如 `{"task_id":{"source":"require('node:assert/strict').equal(require('node:fs').readFileSync('answer.txt','utf8'),'42')","timeoutMs":3000}}`。服务端按原字节存储策略并生成 approvalId；不解释 Plan.acceptance，不从候选配置、package 脚本或原生 Task.spec 读取检查程序。每策略 1–16 个 Task 检查，每段最多 32768 字符、总 UTF-8 128 KiB，每检查最多 30 秒、策略总额最多 60 秒；这是单次验收检查界限，不是费用预算。
+
+| 规则 | owner / 执行点 | 失败处理 | 证据层次 / 状态 |
+|---|---|---|---|
+| 仅当前合法协调者批准；最新成功 settled 的本地监督 Dispatch 与服务端 repo/base/Task 一致 | B / 原生 RPC、Run 配置 | 缺策略、身份或归属不符即拒绝 | 真实 handler/SQLite；程序已执行，限定测试运行已验证 |
+| 候选等于绑定 Worker 工作树 HEAD；先范围检查，再独占 detached 快照 | B / 原 Git runner、snapshot | 原/新路径与固定对象检查复用；完整树仅安全 100644 文件，最多4096文件/16 MiB；不支持的树/元数据拒绝 | 真实临时 Git；运行已验证 |
+| 原字节物化，不执行 checkout/smudge；禁 hooks、外部命令注入与自动拉取，filter/sparse/partial/worktreeConfig 拒绝 | B / snapshot、固定 Node binary+argv | 检查非零、超时、输出超限、字节/HEAD/绑定变化均不能接受 | 真实 Git + Node 子进程；运行已验证 |
+| checking 是原 Task 列的占用；失效仍保留占用直到原进程退出；最终事务 CAS | B / 原 SQLite | 重复/并发及原生缓存回执都复核当前绑定；重批准/状态变化不复用旧接受；进程丢失的 checking 拒绝自动重跑，待监督处理 | 真实 SQLite、dispatcher 重放/并发；运行已验证 |
+| accepted 与 native result 分离，绑定固定候选、策略和 Dispatch | B / `tasks.kernel_acceptance` | 旧完成回执和伪造 result 不可覆盖；字段是固定候选记录，读取当前有效性须走 kernel-accept 复核 | 加性 schema32、持久/迟到回归；运行已验证 |
+| 依赖、集成、真实 Worker、SSH/WSL 与普通目录 | 后续原 owner | P2仍拒绝；accepted 不等于 integrated | 本批未运行真实 Worker/GUI；未支持 |
+
+检查源码是批准者信任的可执行代码，**不是沙箱**；若它主动导入候选代码，批准者需承担该执行风险。子进程仅继承必要系统路径变量，清除 Node 注入变量和 Orca 调用凭据，Electron Node 模式仅限该子进程；不安装依赖、不调用模型、不启动桌面。验证前后检查快照真实文件字节及源 HEAD，不声称文件系统抗外部并发篡改隔离或子进程树沙箱。清理只针对本次独占临时路径，失败返回明确保留路径，绝不清理原 Worker 工作树。旧服务无新方法时 CLI 明确 unsupported，不回退原生完成。
+
+本批证据保存在仓外 `evidence/continuation-20260908-003901/P1-acceptance`：组合12文件482例通过；新增持久性补例后两文件发现/执行55/55（37服务+18 Git/策略）；末轮 fixture 把 SQLite 放进 Git 根而导致越界，已移到测试仓库外并保留失败。Node/CLI类型和编译、main构建逐项记录，首轮 fixture、类型/静态及稀疏构建资源失败保留；未运行全库、真实 Worker 或 P0。CLI 编译使用原 tsc 与 verify-cli-bin 步骤，未执行全局 install-dev-cli；既有 CLI include 漏项经批准仅加 codex-experiment-home.ts 一行，未改其环境源码。
+
 ## 批准正文修复与真实 Worker 准备（2026-09-07）
 
 本批登记为“受管派发服务层修复候选”。R1 拒绝有依赖任务，尚不支持依赖代码落地；R2 仅恢复已验证的原协调者；R5 约束 Run 资源与尝试，不控制账户费用。尚未实现完整 v0.1。

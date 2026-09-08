@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     )),
   deps          TEXT NOT NULL DEFAULT '[]',
   result        TEXT,
+  kernel_acceptance TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   completed_at  TEXT
 );

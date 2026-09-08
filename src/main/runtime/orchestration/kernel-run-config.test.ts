@@ -217,11 +217,11 @@ describe('Kernel Run persistence', () => {
     })
     const task = db.createTask({ spec: 'Persist', runId: original.id })
     db.db.exec(
-      'ALTER TABLE runs DROP COLUMN kernel_config; ALTER TABLE runs DROP COLUMN kernel_default_max_attempts; PRAGMA user_version = 29'
+      'DROP TRIGGER trg_kernel_acceptance_run_changed; ALTER TABLE runs DROP COLUMN kernel_config; ALTER TABLE runs DROP COLUMN kernel_default_max_attempts; PRAGMA user_version = 29'
     )
     db.close()
     db = new OrchestrationDb(file)
-    expect(db.db.pragma('user_version', { simple: true })).toBe(31)
+    expect(db.db.pragma('user_version', { simple: true })).toBe(32)
     const migrated = db.getRun(original.id)!
     expect(migrated).toMatchObject({ objective: 'Before Kernel', kernel_config: null })
     plan.tasks[0].key = task.id
@@ -255,12 +255,38 @@ describe('Kernel Run persistence', () => {
     db.db.exec('ALTER TABLE runs DROP COLUMN kernel_default_max_attempts; PRAGMA user_version = 30')
     db.close()
     db = new OrchestrationDb(file)
-    expect(db.db.pragma('user_version', { simple: true })).toBe(31)
+    expect(db.db.pragma('user_version', { simple: true })).toBe(32)
     expect(readKernelRunConfig(db.getRun(run.id)!)?.limits.maxAttempts).toBe(2)
     configureKernelRun(db, db.getRun(run.id)!, { repoId: 'repo', plan })
     db.close()
     db = new OrchestrationDb(file)
     expect(db.getRun(run.id)?.kernel_default_max_attempts).toBe(2)
     expect(db.getWorkerDispatch(prior.dispatch.id)?.state).toBe('failed')
+  })
+  it('migrates native v31 Tasks additively without changing worker results', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'orca-kernel-v31-'))
+    directories.push(directory)
+    const file = join(directory, 'orchestration.db')
+    db.close()
+    db = new OrchestrationDb(file)
+    const prior = db.createTask({ spec: 'Preserve native task' })
+    db.updateTaskStatus(prior.id, 'completed', 'native result')
+    db.db.exec(
+      'DROP TRIGGER trg_kernel_acceptance_run_changed; DROP TRIGGER trg_kernel_acceptance_task_changed; ALTER TABLE tasks DROP COLUMN kernel_acceptance; PRAGMA user_version = 31'
+    )
+    db.close()
+    db = new OrchestrationDb(file)
+    expect(db.db.pragma('user_version', { simple: true })).toBe(32)
+    expect(db.getTask(prior.id)).toMatchObject({
+      status: 'completed',
+      result: 'native result',
+      kernel_acceptance: null
+    })
+  })
+  it('does not permit acceptance policy injection through ordinary Run configuration', () => {
+    expect(() =>
+      configureKernelRun(db, run, { repoId: 'repo', plan, acceptancePolicy: {} })
+    ).toThrow()
+    expect(db.getRun(run.id)?.kernel_config).toBeNull()
   })
 })

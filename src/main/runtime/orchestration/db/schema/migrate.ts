@@ -22,6 +22,30 @@ export function migrate(this: OrchestrationDb): void {
     if (current < 31 && !this.hasColumn('runs', 'kernel_default_max_attempts')) {
       this.db.exec('ALTER TABLE runs ADD COLUMN kernel_default_max_attempts INTEGER')
     }
+    if (current < 32 && !this.hasColumn('tasks', 'kernel_acceptance')) {
+      this.db.exec('ALTER TABLE tasks ADD COLUMN kernel_acceptance TEXT')
+    }
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS trg_kernel_acceptance_task_changed
+AFTER UPDATE OF status, spec, deps ON tasks
+WHEN OLD.status IS NOT NEW.status OR OLD.spec IS NOT NEW.spec OR OLD.deps IS NOT NEW.deps
+BEGIN
+  UPDATE tasks SET kernel_acceptance = CASE
+    WHEN json_valid(kernel_acceptance) AND json_extract(kernel_acceptance, '$.status') = 'checking'
+    THEN json_set(kernel_acceptance, '$.invalidated', 1) ELSE NULL END WHERE id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_kernel_acceptance_run_changed
+AFTER UPDATE OF kernel_config, consumer_generation, coordinator_handle, coordinator_pane_key ON runs
+WHEN OLD.kernel_config IS NOT NEW.kernel_config
+  OR OLD.consumer_generation IS NOT NEW.consumer_generation
+  OR OLD.coordinator_handle IS NOT NEW.coordinator_handle
+  OR OLD.coordinator_pane_key IS NOT NEW.coordinator_pane_key
+BEGIN
+  UPDATE tasks SET kernel_acceptance = CASE
+    WHEN json_valid(kernel_acceptance) AND json_extract(kernel_acceptance, '$.status') = 'checking'
+    THEN json_set(kernel_acceptance, '$.invalidated', 1) ELSE NULL END WHERE run_id = NEW.id;
+END;
+
+`)
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
     this.db.exec('COMMIT')
   } catch (err) {

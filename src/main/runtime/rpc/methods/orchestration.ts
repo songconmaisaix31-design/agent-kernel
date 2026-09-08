@@ -1,3 +1,4 @@
+import { ORCHESTRATION_KERNEL_ACCEPTANCE_METHODS } from './orchestration-kernel-acceptance'
 /* eslint-disable max-lines -- Why: RPC method definitions co-locate param schemas with handlers; splitting by method would scatter the shared enums and Zod transforms without reducing complexity. */
 import { z } from 'zod'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
@@ -437,6 +438,7 @@ function rejectFederatedExplicitTarget(params: { to?: string; run?: string }): v
 }
 
 export const ORCHESTRATION_METHODS: RpcMethod[] = [
+  ...ORCHESTRATION_KERNEL_ACCEPTANCE_METHODS,
   ...ORCHESTRATION_RUN_METHODS,
   ...ORCHESTRATION_WORKER_METHODS,
   ...ORCHESTRATION_FEDERATION_METHODS,

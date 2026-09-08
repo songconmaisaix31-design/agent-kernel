@@ -9,6 +9,8 @@ describe('orchestration RPC contract', () => {
   it.each([
     ['orchestration.runCreate', {}],
     ['orchestration.runUse', {}],
+    ['orchestration.kernelApproveAcceptance', {}],
+    ['orchestration.kernelAccept', {}],
     ['orchestration.send', {}],
     ['orchestration.reply', {}],
     ['orchestration.taskCreate', {}],

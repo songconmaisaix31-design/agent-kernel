@@ -1,3 +1,4 @@
+import { kernelAcceptanceHandlers } from './orchestration-kernel-acceptance'
 /* eslint-disable max-lines -- Why: orchestration CLI handlers share flag-parsing helpers and dispatch/preamble logic; splitting by verb would fragment the RuntimeClient call shape without reducing complexity. */
 import type { CommandHandler } from '../dispatch'
 import type { RuntimeClient } from '../runtime-client'
@@ -492,6 +493,7 @@ function safeJson(value: unknown): string {
 }
 
 export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
+  ...kernelAcceptanceHandlers(resolveCoordinatorTerminalHandle),
   'orchestration run-create': async ({ flags, client, cwd, json }) => {
     const from = await resolveCoordinatorTerminalHandle(flags, cwd, client)
     const result = await callMutation<{
