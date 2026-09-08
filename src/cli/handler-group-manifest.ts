@@ -103,6 +103,8 @@ export const HANDLER_GROUPS: readonly HandlerGroup[] = [
   {
     name: 'orchestration',
     keys: [
+      'orchestration kernel-approve-acceptance',
+      'orchestration kernel-accept',
       'orchestration run-create',
       'orchestration run-use',
       'orchestration run-current',
