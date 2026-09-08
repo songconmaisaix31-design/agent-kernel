@@ -49,6 +49,7 @@ if (process.argv.includes('--print-child-env')) {
         candidateProfile: process.env.ORCA_USER_DATA_PATH,
         candidateRuntime: process.env.ORCA_APP_EXECUTABLE,
         candidateCliCommand: process.env.ORCA_CLI_COMMAND,
+        readinessDiagnosticsEnabled: process.env.ORCA_EXPERIMENT_READINESS_DIAGNOSTICS === '1',
         pathKeyCount: Object.keys(process.env).filter((key) => key.toLowerCase() === 'path').length
       }))`
     ],
@@ -87,6 +88,9 @@ function createChildEnvironment(userDataBinDir) {
   }
   return {
     ...env,
+    ...(process.argv.includes('--readiness-diagnostics')
+      ? { ORCA_EXPERIMENT_READINESS_DIAGNOSTICS: '1' }
+      : {}),
     ORCA_EXPERIMENT_CODEX_SYSTEM_HOME: systemHome,
     ORCA_USER_DATA_PATH: profile,
     ORCA_DEV_REPO_ROOT: repoRoot,
@@ -98,7 +102,9 @@ function createChildEnvironment(userDataBinDir) {
 }
 
 function assertExperimentTree(homePath) {
-  if (!exists(homePath)) {return}
+  if (!exists(homePath)) {
+    return
+  }
   const pending = [homePath]
   while (pending.length > 0) {
     const current = pending.pop()
@@ -131,9 +137,13 @@ function findExistingPath(candidatePath) {
       lstatSync(current)
       return current
     } catch (error) {
-      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {throw error}
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+        throw error
+      }
       const parent = resolve(current, '..')
-      if (parent === current) {throw error}
+      if (parent === current) {
+        throw error
+      }
       current = parent
     }
   }
@@ -144,7 +154,9 @@ function exists(path) {
     lstatSync(path)
     return true
   } catch (error) {
-    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {return false}
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+      return false
+    }
     throw error
   }
 }

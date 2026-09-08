@@ -69,5 +69,23 @@ describe.skipIf(process.platform !== 'win32')('run-windows-managed-smoke', () =>
     expect(childEnv.candidateRuntime).toContain('electron-43.1.0-win32-x64\\electron.exe')
     expect(childEnv.candidateCliCommand).toContain('native-run\\profile\\cli\\bin\\orca-dev.cmd')
     expect(childEnv.pathKeyCount).toBe(1)
+    expect(childEnv.readinessDiagnosticsEnabled).toBe(false)
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'enables private readiness capture only by explicit experiment flag',
+    () => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          'config/scripts/run-windows-managed-smoke.mjs',
+          '--print-child-env',
+          '--readiness-diagnostics'
+        ],
+        { cwd: resolve(import.meta.dirname, '..', '..'), encoding: 'utf8' }
+      )
+      expect(result.status).toBe(0)
+      expect(JSON.parse(result.stdout).readinessDiagnosticsEnabled).toBe(true)
+    }
+  )
 })

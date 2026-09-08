@@ -1,5 +1,29 @@
 # Windows managed smoke — 2026-09-07
 
+## Private readiness observation (default off)
+
+Only the Fork experiment launcher accepts `--readiness-diagnostics`. Before a
+targeted terminal wait, create `private-readiness/capture.json` inside the existing
+experiment profile: `{"terminal":"term_<actual-handle>","maxSnapshots":1}`.
+The directory must already exist, remain private, and resolve without redirects.
+The first valid configuration is fixed for that runtime; the limit is 1–5 result
+observations, including failed capture attempts. No directory, polling service,
+debug port, Run, identity or approval is created by this option.
+
+The observer serializes the result and retained tail inputs synchronously, checks
+the existing handle/PTY binding before and after state collection, and writes an
+exclusive private file. It records title observation stamps separately from epoch
+times, fresh hook status, lifecycle state and missing values. It does not read a
+screen or inspect foreground processes. `fallback-result-only` records describe
+the result-time state, not an atomic snapshot of an earlier asynchronous process
+probe; only synchronous `waitForTerminal` observations support exact text-decision
+replay. Event-only resolutions and timeouts are not captured by this narrow hook.
+Existing text redaction is applied before disk writes; `redactionChangedInputs`
+means byte-exact replay has not been established. Oversized snapshots produce only
+a size-limit error. I/O, configuration and identity errors never alter wait results.
+Keep these files private: they are bounded diagnostic fragments, not publishable
+session exports. This instrumentation changes no readiness or authorization rule.
+
 ## Scope and provenance
 
 - Candidate: `songconmaisaix31-design/kernel-v01-candidate` at `f3f675dc07119c3c4bc299796dee36569043d49a` (clean at launch).

@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks'
 import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join, win32 } from 'node:path'
@@ -16753,6 +16753,67 @@ describe('OrcaRuntimeService', () => {
       blockedReason: 'codex-hooks-review-prompt'
     })
   })
+
+  it.each(['blocked', 'ready'])(
+    'private readiness diagnostics preserve the actual %s wait result',
+    async (scenario) => {
+      const root = await mkdtemp(join(tmpdir(), 'orca-readiness-runtime-'))
+      onTestFinished(async () => {
+        vi.unstubAllEnvs()
+        await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+      })
+      const directory = join(root, 'private-readiness')
+      mkdirSync(directory)
+      vi.stubEnv('ORCA_EXPERIMENT_READINESS_DIAGNOSTICS', '')
+      vi.stubEnv('ORCA_EXPERIMENT_CODEX_SYSTEM_HOME', root)
+      vi.stubEnv('ORCA_DEV_REPO_ROOT', root)
+      vi.stubEnv('ORCA_USER_DATA_PATH', root)
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-diag' }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => 'codex'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      const text =
+        scenario === 'blocked'
+          ? 'Would you like to grant these permissions?\nPress enter to confirm or esc to cancel\n'
+          : ' >_ OpenAI Codex (v0.132.0)\n model: gpt-5.5 high\n directory: ~/test\n'
+      runtime.onPtyData('pty-diag', text, Date.now())
+      const disabled = await runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 1000
+      })
+      expect(readdirSync(directory)).toEqual([])
+      writeFileSync(
+        join(directory, 'capture.json'),
+        JSON.stringify({ terminal: handle, maxSnapshots: 1 })
+      )
+      vi.stubEnv('ORCA_EXPERIMENT_READINESS_DIAGNOSTICS', '1')
+      const enabled = await runtime.waitForTerminal(handle, {
+        condition: 'tui-idle',
+        timeoutMs: 1000
+      })
+      expect(enabled).toEqual(disabled)
+      expect(enabled.satisfied).toBe(scenario === 'ready')
+      const filename = readdirSync(directory).find((name) => name !== 'capture.json')
+      expect(filename).toBeDefined()
+      if (!filename) {
+        throw new Error('diagnostic_snapshot_missing')
+      }
+      const saved = JSON.parse(readFileSync(join(directory, filename), 'utf8'))
+      expect(saved.result).toEqual(enabled)
+      expect(saved.identity).toEqual({ handle, ptyId: 'pty-diag', bindingAfter: 'pty-diag' })
+      expect(saved.inputs.tailBuffer.join('\n')).toContain(text.trimEnd())
+      expect(saved.phase).toBe('waitForTerminal')
+      expect(saved.redactionChangedInputs).toBe(false)
+      expect(
+        await runtime.waitForTerminal(handle, { condition: 'tui-idle', timeoutMs: 1000 })
+      ).toEqual(enabled)
+      expect(readdirSync(directory)).toHaveLength(2)
+    }
+  )
 
   it('returns a blocked wait result for generic Codex interactive prompts', async () => {
     const runtime = new OrcaRuntimeService(store)

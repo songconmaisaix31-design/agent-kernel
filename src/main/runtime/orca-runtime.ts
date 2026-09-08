@@ -12,6 +12,7 @@ import {
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
+import { TerminalReadinessDiagnostics } from './terminal-readiness-diagnostics'
 import { planWorktreeSortOrderUpdates } from '../../shared/worktree/sort-order-update'
 import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
 import {
@@ -2987,6 +2988,7 @@ export type RuntimeRendererReloadFence = Readonly<{
 }>
 
 export class OrcaRuntimeService {
+  private readonly readinessDiagnostics = new TerminalReadinessDiagnostics()
   private readonly runtimeId = randomUUID()
   private readonly startedAt = Date.now()
   private readonly store: RuntimeStore | null
@@ -19589,6 +19591,61 @@ export class OrcaRuntimeService {
     }
   }
 
+  private observeReadinessResult(
+    record: RuntimePtyWorktreeRecord | RuntimeLeafRecord,
+    phase: string,
+    result: RuntimeTerminalWait
+  ): RuntimeTerminalWait {
+    if (result.condition !== 'tui-idle') {
+      return result
+    }
+    this.readinessDiagnostics.record(result.handle, () => {
+      const ptyId = this.getTerminalAgentStatusPtyId(result.handle)
+      this.assertTerminalAgentStatusPtyBinding(result.handle, record.ptyId ?? '')
+      const leaf = this.getPrimaryLeafForPty(ptyId)
+      const snapshot = {
+        runtimeId: this.runtimeId,
+        capturedAt: Date.now(),
+        phase,
+        identity: { handle: result.handle, ptyId, bindingAfter: ptyId },
+        inputs: {
+          tailBuffer: [...record.tailBuffer],
+          tailPartialLine: record.tailPartialLine,
+          preview: record.preview,
+          waitText: buildTerminalWaitText(record.tailBuffer, record.tailPartialLine, record.preview)
+        },
+        state: {
+          recordKind: 'incarnationId' in record ? 'pty' : 'leaf',
+          incarnationId: 'incarnationId' in record ? record.incarnationId : null,
+          ptyGeneration: 'ptyGeneration' in record ? record.ptyGeneration : null,
+          connectionId: 'connectionId' in record ? record.connectionId : null,
+          connected: record.connected,
+          lastOutputAt: record.lastOutputAt,
+          lastAgentStatus: record.lastAgentStatus,
+          lastAgentStatusObservedLive: record.lastAgentStatusObservedLive,
+          lastOscTitle: record.lastOscTitle,
+          lastOscTitleSequence: record.lastOscTitleAt,
+          lastOscTitleEpochMs: 'lastOscTitleEpochMs' in record ? record.lastOscTitleEpochMs : null,
+          title: 'title' in record ? record.title : record.paneTitle,
+          titleUpdatedAt:
+            'titleUpdatedAt' in record ? record.titleUpdatedAt : record.paneTitleUpdatedAt,
+          adoptedPaneTitle: leaf?.paneTitle ?? null,
+          adoptedPaneTitleUpdatedAt: leaf?.paneTitleUpdatedAt ?? null,
+          waitBlockedAt: record.waitBlockedAt,
+          explicitStatus: this.getFreshExplicitAgentStatusForHandle(result.handle),
+          lifecycle: this.agentPromptLifecycleByPtyId.get(ptyId) ?? null,
+          foregroundProcess: null,
+          foregroundEvidence: 'not collected; fallback result is not an atomic process snapshot'
+        },
+        result: { ...result }
+      }
+      this.assertTerminalAgentStatusPtyBinding(result.handle, ptyId)
+      snapshot.identity.bindingAfter = this.getTerminalAgentStatusPtyId(result.handle)
+      return snapshot
+    })
+    return result
+  }
+
   async waitForTerminal(
     handle: string,
     options?: {
@@ -19601,7 +19658,11 @@ export class OrcaRuntimeService {
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       if (condition === 'exit' && !pty.pty.connected) {
-        return buildPtyTerminalWaitResult(handle, condition, pty.pty)
+        return this.observeReadinessResult(
+          pty.pty,
+          'waitForTerminal',
+          buildPtyTerminalWaitResult(handle, condition, pty.pty)
+        )
       }
       const ptyWaitText = buildTerminalWaitText(
         pty.pty.tailBuffer,
@@ -19610,17 +19671,29 @@ export class OrcaRuntimeService {
       )
       const ptyBlockedReason = detectTerminalWaitBlockedReason(ptyWaitText)
       if (condition === 'tui-idle' && ptyBlockedReason) {
-        return buildPtyTerminalWaitBlockedResult(handle, condition, pty.pty, ptyBlockedReason)
+        return this.observeReadinessResult(
+          pty.pty,
+          'waitForTerminal',
+          buildPtyTerminalWaitBlockedResult(handle, condition, pty.pty, ptyBlockedReason)
+        )
       }
       if (condition === 'tui-idle' && pty.pty.lastAgentStatus === 'idle') {
-        return buildPtyTerminalWaitResult(handle, condition, pty.pty)
+        return this.observeReadinessResult(
+          pty.pty,
+          'waitForTerminal',
+          buildPtyTerminalWaitResult(handle, condition, pty.pty)
+        )
       }
       if (
         condition === 'tui-idle' &&
         (this.getAdoptedPtyExplicitIdleStatus(pty.pty) === 'idle' ||
           isKnownReadyPromptPreview(ptyWaitText))
       ) {
-        return buildPtyTerminalWaitResult(handle, condition, pty.pty)
+        return this.observeReadinessResult(
+          pty.pty,
+          'waitForTerminal',
+          buildPtyTerminalWaitResult(handle, condition, pty.pty)
+        )
       }
       return await new Promise<RuntimeTerminalWait>((resolve, reject) => {
         const effectiveTimeoutMs =
@@ -19659,7 +19732,14 @@ export class OrcaRuntimeService {
           this.removeWaiter(waiter)
           reject(new Error('terminal_handle_stale'))
         } else if (condition === 'exit' && !live.pty.connected) {
-          this.resolveWaiter(waiter, buildPtyTerminalWaitResult(handle, condition, live.pty))
+          this.resolveWaiter(
+            waiter,
+            this.observeReadinessResult(
+              live.pty,
+              'waitForTerminal',
+              buildPtyTerminalWaitResult(handle, condition, live.pty)
+            )
+          )
         } else if (condition === 'tui-idle') {
           const livePtyWaitText = buildTerminalWaitText(
             live.pty.tailBuffer,
@@ -19670,15 +19750,33 @@ export class OrcaRuntimeService {
           if (blockedReason) {
             this.resolveWaiter(
               waiter,
-              buildPtyTerminalWaitBlockedResult(handle, condition, live.pty, blockedReason)
+              this.observeReadinessResult(
+                live.pty,
+                'waitForTerminal',
+                buildPtyTerminalWaitBlockedResult(handle, condition, live.pty, blockedReason)
+              )
             )
           } else if (live.pty.lastAgentStatus === 'idle') {
-            this.resolveWaiter(waiter, buildPtyTerminalWaitResult(handle, condition, live.pty))
+            this.resolveWaiter(
+              waiter,
+              this.observeReadinessResult(
+                live.pty,
+                'waitForTerminal',
+                buildPtyTerminalWaitResult(handle, condition, live.pty)
+              )
+            )
           } else if (
             this.getAdoptedPtyExplicitIdleStatus(live.pty) === 'idle' ||
             isKnownReadyPromptPreview(livePtyWaitText)
           ) {
-            this.resolveWaiter(waiter, buildPtyTerminalWaitResult(handle, condition, live.pty))
+            this.resolveWaiter(
+              waiter,
+              this.observeReadinessResult(
+                live.pty,
+                'waitForTerminal',
+                buildPtyTerminalWaitResult(handle, condition, live.pty)
+              )
+            )
           } else {
             this.startPtyTuiIdleFallbackPoll(waiter, live.pty)
           }
@@ -19688,13 +19786,21 @@ export class OrcaRuntimeService {
     const { leaf } = this.getLiveLeafForHandle(handle)
 
     if (condition === 'exit' && getTerminalState(leaf) === 'exited') {
-      return buildTerminalWaitResult(handle, condition, leaf)
+      return this.observeReadinessResult(
+        leaf,
+        'waitForTerminal',
+        buildTerminalWaitResult(handle, condition, leaf)
+      )
     }
 
     const leafWaitText = buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview)
     const leafBlockedReason = detectTerminalWaitBlockedReason(leafWaitText)
     if (condition === 'tui-idle' && leafBlockedReason) {
-      return buildTerminalWaitBlockedResult(handle, condition, leaf, leafBlockedReason)
+      return this.observeReadinessResult(
+        leaf,
+        'waitForTerminal',
+        buildTerminalWaitBlockedResult(handle, condition, leaf, leafBlockedReason)
+      )
     }
 
     // Why: if the agent already transitioned to idle (or permission) before the
@@ -19703,7 +19809,11 @@ export class OrcaRuntimeService {
     // Why: only 'idle' satisfies tui-idle, not 'permission'. Permission means the
     // agent is blocked on user approval, not finished with its task.
     if (condition === 'tui-idle' && leaf.lastAgentStatus === 'idle') {
-      return buildTerminalWaitResult(handle, condition, leaf)
+      return this.observeReadinessResult(
+        leaf,
+        'waitForTerminal',
+        buildTerminalWaitResult(handle, condition, leaf)
+      )
     }
     if (condition === 'tui-idle') {
       const fastPathTitle = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
@@ -19711,7 +19821,11 @@ export class OrcaRuntimeService {
         (fastPathTitle && detectExplicitIdleStatusFromTitle(fastPathTitle) === 'idle') ||
         isKnownReadyPromptPreview(leafWaitText)
       ) {
-        return buildTerminalWaitResult(handle, condition, leaf)
+        return this.observeReadinessResult(
+          leaf,
+          'waitForTerminal',
+          buildTerminalWaitResult(handle, condition, leaf)
+        )
       }
     }
 
@@ -19761,7 +19875,14 @@ export class OrcaRuntimeService {
       try {
         const live = this.getLiveLeafForHandle(handle)
         if (getTerminalState(live.leaf) === 'exited') {
-          this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
+          this.resolveWaiter(
+            waiter,
+            this.observeReadinessResult(
+              live.leaf,
+              'waitForTerminal',
+              buildTerminalWaitResult(handle, condition, live.leaf)
+            )
+          )
         } else if (condition === 'tui-idle') {
           const liveLeafWaitText = buildTerminalWaitText(
             live.leaf.tailBuffer,
@@ -19772,14 +19893,25 @@ export class OrcaRuntimeService {
           if (blockedReason) {
             this.resolveWaiter(
               waiter,
-              buildTerminalWaitBlockedResult(handle, condition, live.leaf, blockedReason)
+              this.observeReadinessResult(
+                live.leaf,
+                'waitForTerminal',
+                buildTerminalWaitBlockedResult(handle, condition, live.leaf, blockedReason)
+              )
             )
           } else if (live.leaf.lastAgentStatus === 'idle') {
             // Why: don't clear lastAgentStatus here. It's a factual record of the
             // last detected OSC state, not a one-shot signal. Clearing it causes
             // subsequent tui-idle waiters to hang even though the agent is idle —
             // the first waiter consumes the status and all later ones see null.
-            this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
+            this.resolveWaiter(
+              waiter,
+              this.observeReadinessResult(
+                live.leaf,
+                'waitForTerminal',
+                buildTerminalWaitResult(handle, condition, live.leaf)
+              )
+            )
           } else {
             // Why: renderer-synced previews can show a known ready prompt even
             // while the last OSC title is still "working"; keep polling the
@@ -19789,7 +19921,14 @@ export class OrcaRuntimeService {
               (fastPathTitle && detectExplicitIdleStatusFromTitle(fastPathTitle) === 'idle') ||
               isKnownReadyPromptPreview(liveLeafWaitText)
             ) {
-              this.resolveWaiter(waiter, buildTerminalWaitResult(handle, condition, live.leaf))
+              this.resolveWaiter(
+                waiter,
+                this.observeReadinessResult(
+                  live.leaf,
+                  'waitForTerminal',
+                  buildTerminalWaitResult(handle, condition, live.leaf)
+                )
+              )
             } else {
               this.startTuiIdleFallbackPoll(waiter, live.leaf)
             }
@@ -35385,7 +35524,14 @@ export class OrcaRuntimeService {
             clearInterval(waiter.pollInterval)
             waiter.pollInterval = null
           }
-          this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
+          this.resolveWaiter(
+            waiter,
+            this.observeReadinessResult(
+              leaf,
+              'fallback-result-only',
+              buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf)
+            )
+          )
           return
         }
         // Why: the renderer-synced title is the only path where OSC titles are visible for daemon-hosted terminals.
@@ -35397,7 +35543,14 @@ export class OrcaRuntimeService {
               clearInterval(waiter.pollInterval)
               waiter.pollInterval = null
             }
-            this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
+            this.resolveWaiter(
+              waiter,
+              this.observeReadinessResult(
+                leaf,
+                'fallback-result-only',
+                buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf)
+              )
+            )
             return
           }
         }
@@ -35414,7 +35567,11 @@ export class OrcaRuntimeService {
           }
           this.resolveWaiter(
             waiter,
-            buildTerminalWaitBlockedResult(waiter.handle, 'tui-idle', leaf, blockedReason)
+            this.observeReadinessResult(
+              leaf,
+              'fallback-result-only',
+              buildTerminalWaitBlockedResult(waiter.handle, 'tui-idle', leaf, blockedReason)
+            )
           )
           return
         }
@@ -35423,7 +35580,14 @@ export class OrcaRuntimeService {
             clearInterval(waiter.pollInterval)
             waiter.pollInterval = null
           }
-          this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
+          this.resolveWaiter(
+            waiter,
+            this.observeReadinessResult(
+              leaf,
+              'fallback-result-only',
+              buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf)
+            )
+          )
           return
         }
         // Foreground fallback: a reported non-shell process with quiet output is treated as idle.
@@ -35443,7 +35607,14 @@ export class OrcaRuntimeService {
                 clearInterval(waiter.pollInterval)
                 waiter.pollInterval = null
               }
-              this.resolveWaiter(waiter, buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf))
+              this.resolveWaiter(
+                waiter,
+                this.observeReadinessResult(
+                  leaf,
+                  'fallback-result-only',
+                  buildTerminalWaitResult(waiter.handle, 'tui-idle', leaf)
+                )
+              )
             }
           }
         }
@@ -35470,7 +35641,14 @@ export class OrcaRuntimeService {
             clearInterval(waiter.pollInterval)
             waiter.pollInterval = null
           }
-          this.resolveWaiter(waiter, buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty))
+          this.resolveWaiter(
+            waiter,
+            this.observeReadinessResult(
+              pty,
+              'fallback-result-only',
+              buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty)
+            )
+          )
           return
         }
         const ptyWaitText = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
@@ -35482,7 +35660,11 @@ export class OrcaRuntimeService {
           }
           this.resolveWaiter(
             waiter,
-            buildPtyTerminalWaitBlockedResult(waiter.handle, 'tui-idle', pty, blockedReason)
+            this.observeReadinessResult(
+              pty,
+              'fallback-result-only',
+              buildPtyTerminalWaitBlockedResult(waiter.handle, 'tui-idle', pty, blockedReason)
+            )
           )
           return
         }
@@ -35495,7 +35677,14 @@ export class OrcaRuntimeService {
             clearInterval(waiter.pollInterval)
             waiter.pollInterval = null
           }
-          this.resolveWaiter(waiter, buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty))
+          this.resolveWaiter(
+            waiter,
+            this.observeReadinessResult(
+              pty,
+              'fallback-result-only',
+              buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty)
+            )
+          )
           return
         }
         if (pty.lastAgentStatus === null && this.ptyController && !foregroundPollInFlight) {
@@ -35509,7 +35698,14 @@ export class OrcaRuntimeService {
                 clearInterval(waiter.pollInterval)
                 waiter.pollInterval = null
               }
-              this.resolveWaiter(waiter, buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty))
+              this.resolveWaiter(
+                waiter,
+                this.observeReadinessResult(
+                  pty,
+                  'fallback-result-only',
+                  buildPtyTerminalWaitResult(waiter.handle, 'tui-idle', pty)
+                )
+              )
             }
           }
         }
