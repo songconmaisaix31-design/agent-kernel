@@ -19,10 +19,19 @@ describe('orchestration worker recovery', () => {
     db = new OrchestrationDb(':memory:')
     runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
+    vi.spyOn(runtime, 'captureSupervisedTerminalCloseGuard').mockImplementation(
+      (_handle, isCurrent) => isCurrent
+    )
     vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue(
       'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
     )
     vi.spyOn(runtime, 'getTerminalProcessIncarnation').mockReturnValue('runtime:pty:1')
+    vi.spyOn(runtime, 'getOrchestrationDispatchAuthority').mockReturnValue({
+      terminalHandle: 'term_worker',
+      paneKey: 'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      processIncarnation: 'runtime:pty:1',
+      hostScope: { kind: 'local', hostId: 'local' }
+    } as never)
     vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
       handle: 'term_worker',
       worktreeId: 'repo::worktree',
@@ -73,7 +82,8 @@ describe('orchestration worker recovery', () => {
       worktreeId: 'repo::worktree',
       setupState: 'not_applicable',
       effects: [{ kind: 'terminal', action: 'created', id: 'term_worker' }],
-      terminalOwnership: 'created'
+      terminalOwnership: 'created',
+      hostScope: JSON.stringify({ kind: 'local', hostId: 'local' })
     })
     if (ready) {
       db.markWorkerDispatchReady(started.dispatch.id)
@@ -110,7 +120,9 @@ describe('orchestration worker recovery', () => {
       state: 'stopped',
       processAction: 'closed_agent_terminal'
     })
-    expect(runtime.closeTerminal).toHaveBeenCalledWith('term_worker')
+    expect(runtime.closeTerminal).toHaveBeenCalledWith('term_worker', {
+      isCurrent: expect.any(Function)
+    })
     expect(db.getTask(task.id)?.status).toBe('blocked')
   })
 
