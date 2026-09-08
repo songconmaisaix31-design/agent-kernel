@@ -295,24 +295,26 @@ if ($LASTEXITCODE -ne 0) { throw 'Main build failed' }
 |---|---|---|---|---|---|
 | 词法 Plan、任务 key、文件/目录边界 | A 类型/validator；B 调用 | `kernel-candidate-review.ts` 入口、`kernel-candidate-review-paths.ts` | 非法 Plan、未知任务、越界/特殊路径拒绝 | 本批真实 Git 入口回归；复用既有 validator | 运行已验证 |
 | 显式完整 SHA、对象确为 commit、批准基线一致、base 为 candidate 祖先 | B | 原生 `gitExecFileAsync`：`cat-file`、`merge-base --is-ancestor` | 缺对象、错误、无关历史均 rejected；禁用 replace，拒绝 shallow/grafts/partial clone | [代码 706cf15](https://github.com/songconmaisaix31-design/orca-kernel/commit/706cf15ffc9d4328167ffbdb4c03aa72be620ac2) | 运行已验证 |
-| 完整 NUL raw 差异与两端树交叉核对；删除旧路径、Git 检出的 rename/copy 两端均检查 | B | `diff-tree -r -M -C --find-copies-harder -l0`、`ls-tree -r -z --full-tree`、changed blob 检查 | 空差异、遗漏、解析/截断/读取错误拒绝；路径大小写歧义拒绝 | `kernel-candidate-review.test.ts`：63/63，包括真实特殊路径树和超限输出 | 运行已验证 |
+| 完整 NUL 端点差异与两端树交叉核对；写权只检查实际增删改路径 | B | `diff-tree -r --no-renames`、`ls-tree -r -z --full-tree`、changed blob 检查；旧/新树分别校验文件/目录形态 | 空差异、遗漏、解析/截断/读取错误拒绝；特殊路径和大小写歧义拒绝；真实越界增删改返回 out_of_scope | 初批 63/63 保留为历史；本次 copy/形态语义返修证据见下文 | 运行已验证 |
 | 只支持 native 本地普通/linked Git worktree；变更模式仅 `100644` | B | 仓库路径/元数据检查及 raw 两端模式检查 | SSH/WSL/UNC、普通非 Git 目录、symlink/gitlink/执行位变化明确拒绝，无本地 fallback | 同上，覆盖受限宿主及真实 linked worktree | 运行已验证 |
 | 固定 argv，不用 shell；禁止外部 diff/textconv/hooks；每命令 15 秒、输出上限 2 MiB | B | 既有 runner，加显式只读选项、清除继承 Git 覆盖变量 | Git 失败/超限拒绝，不把部分输出当空差异 | 注入输入、replace、恶意配置、真实大树回归；Node-only | 运行已验证 |
 | 依赖任务、可信验收执行、正式接纳/集成 | 后续总控决定 | 本批依赖入口拒绝；其余无执行点 | 不放开依赖，不执行 acceptance，不写状态或自动合入 | 本批未执行真实 Worker、验收命令或候选 Electron | 未支持 |
 
 验证环境：Windows，Git `2.47.0.windows.1`、Node `24.16.0`、pnpm `10.24.0`；单文件 Vitest 实际发现并通过 63 项，`pnpm run typecheck:node`、Node `tsc --listFilesOnly` 收录三份新 TS、改动代码 oxlint/oxfmt、diff check 均通过。日志位于仓外 `C:/Users/DW/AppData/Local/OrcaKernelLab/evidence/continuation-20260908-003901/B`；Node 测试设置进程级 `ELECTRON_OVERRIDE_DIST_PATH`，没有安装依赖或启动 Electron。首轮 7 项 fixture 失败源于 Windows `update-index` 丢弃特殊名称，改用真实 `mktree` 并先断言树内名称后通过，未削弱负例。
 
-命令遵守 [Git 2.25 基线](reference/git-compatibility.md)，选项依据 [2.25 diff-tree 文档](https://git-scm.com/docs/git-diff-tree/2.25.0)；本机未另装或实跑 Git 2.25。范围是两棵固定提交树的净差异，Git rename/copy 检测不是内容来源证明；不审计中间已回退的提交、不锁定仓库元数据、不证明工作目录 junction/hardlink 沙箱或仓库文件的抗并发篡改能力。范围结果尚未接入接纳流程，后续调用者仍须验证批准来源及实际宿主，并另行完成受信验收与集成。
+本次范围语义返修以 `64c9b36` 为基线：生产代码未改时新增 9 例实际为 7 失败、2 通过（未变来源副本误报 out_of_scope，形态转换误报 unsafe_path）；修复后同组 9/9，完整候选 72 + Plan 129 实际发现并执行 201/201。首轮完整组清理 EBUSY、类型检查缺少五个已跟踪输入及新测试风格失败均保留；最终 Node 类型及变更 TS lint/format 通过。仓外证据位于 `B-scope-semantics`，本次未复跑历史 456 例、构建或真实 Worker。
+
+命令遵守 [Git 2.25 基线](reference/git-compatibility.md)，选项依据 [2.25 diff-tree 文档](https://git-scm.com/docs/git-diff-tree/2.25.0)；本机未另装或实跑 Git 2.25。范围是两棵固定提交树的净差异，不推断 rename/copy 或内容来源；未改动的范围外来源不需要写权，新增副本只检查目的路径，移动按旧路径删除和新路径新增检查。旧树和新树分别理解文件/目录形态，范围内 file-to-dir 与 dir-to-file 可以通过；不审计中间已回退的提交、不锁定仓库元数据、不证明工作目录 junction/hardlink 沙箱或仓库文件的抗并发篡改能力。范围结果尚未接入接纳流程，后续调用者仍须验证批准来源及实际宿主，并另行完成受信验收与集成。
 
 ## 本批监督契约（2026-09-08，主控）
 
 | 规则 | owner | 执行点 | 失败处理 | 验证证据 | 状态 |
 |---|---|---|---|---|---|
 | Task 明确基线与唯一写入路径；共享接口由 B 单一维护 | 主控派发，A/B 执行 | 原生 Task.spec 与提交差异审查 | 越界退回原 owner；不冒充文件系统沙箱 | 看板所列三 Task；候选 `479322a` 相对 `e39c3c7` 仅四文件 | 提示约定 |
-| 开发 Run 只由当前合法主控消费，候选使用另一实例的原生身份 | 主控 / 环境 terra | 日常 run-current、generation 与当前 Delivery | consumer_fenced 停止消费，核实绑定；不复制身份或改库 | 开发 `run_17a07a644aaa` / generation 2；候选身份仍待测 | 程序已执行 |
-| 真实工具审批保留；续接先确认旧执行者不再写入 | 主控 / 原执行者 / 用户 | 原生 readiness 与原终端审批 | 只暂停依赖操作，不代按、不换 Agent 绕过；其他任务独立推进 | A readiness 拒绝；terra 等人工恢复；B 两批完成后 retain | 程序已执行 |
-| 源码候选经测试和固定提交审查后普通集成 | B 源码与串行集成，主控验收 | 原生 worker_done、当前 Delivery ACK、Git 快进 | 失败回原 owner，保存首轮失败，不放宽断言 | `479322a` 的 13 文件发现/执行 456/456、Node 类型及 main 构建；本地报告索引在看板 | 运行已验证 |
-| 实际模型与用量以会话记录为准；未通过功能不启动 12 次比较 | 主控监督 | 当前 turn_context、计数快照与里程碑检查 | 未知单列，不编造费用或实验效果 | 本批同一 B astra/high；A/terra 增量 0；看板记录分段口径 | 程序已执行 |
+| 开发 Run 的原生身份 fencing；候选独立身份仍待测 | 原生 Run 服务；主控 / 环境 terra 核对 | 日常 run-current、generation 与当前 Delivery；仅原生服务拒绝属于程序强制 | consumer_fenced 为程序拒绝；后续核实绑定、不复制身份为操作约定 | 开发 `run_17a07a644aaa` / generation 2；不据此声称候选身份已验证 | 程序已执行 |
+| 真实工具审批保留；续接先确认旧执行者不再写入 | 主控 / 原执行者 / 用户 | 工具报告 readiness / 审批事实；续接及换人决定由监督者落实 | 只暂停依赖操作，不代按、不换 Agent 绕过是监督约定，非本模块自动拦截 | A readiness 拒绝是工具事实；terra 等人工恢复；B 两批完成后 retain | 提示约定 |
+| 源码候选经测试和固定提交审查后普通集成 | B 源码与串行集成，主控验收 | 原生 worker_done、当前 Delivery ACK、Git 快进 | 失败回原 owner，保存首轮失败，不放宽断言 | 历史 `479322a` 的 13 文件发现/执行 456/456、Node 类型及 main 构建；本次未复跑，本地报告索引在看板 | 运行已验证 |
+| 实际模型与用量以会话记录为准；未通过功能不启动 12 次比较 | 主控监督 | 工具读取 turn_context / 计数；人工或 Agent 执行里程碑与预算策略 | 未知单列，不编造费用或实验效果；不声称已有自动预算或实验启动门 | 原批同一 B astra/high、A/terra 增量 0 的快照记录保留；非自动预算控制证据 | 提示约定 |
 | 正式成果接纳、依赖代码落地与真实 Worker 停止/接续 | 后续原 owner | 当前无完整执行点 | 维持未通过，不将范围检查等同接受成果 | M1–M5 剩余条件见唯一看板 | 未支持 |
 
-本表只说明本批实际监督与证据，不表示不可篡改审计、强制写入隔离或跨平台运行证明。
+本表区分工具采集事实、人工/Agent 提示约定、实际调用入口的程序强制，以及具体运行验证；“运行已验证”只覆盖列明的命令和边界，不表示自动接纳门。派发文件范围、换人和预算策略尚需监督者落实，不标成程序已执行；真实 Git 回归及服务层终端/资源替身均不是真实 Worker。历史通过/失败记录不变，也不表示不可篡改审计、强制写入隔离或跨平台运行证明。

@@ -89,7 +89,7 @@ describe('Kernel candidate scope review with real Git', () => {
     vi.unstubAllEnvs()
     // Only the mkdtemp root created by this test is removed.
     if (root) {
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -149,17 +149,77 @@ describe('Kernel candidate scope review with real Git', () => {
   })
   it.each([
     ['src/file.txt', 'src/copied.txt', true],
-    ['outside.txt', 'src/copied.txt', false],
+    ['outside.txt', 'src/copied.txt', true],
     ['src/file.txt', 'outside-copy.txt', false]
-  ] as const)('checks both copy paths %s -> %s', async (from, to, allowed) => {
+  ] as const)('checks only the changed copy destination %s -> %s', async (from, to, allowed) => {
     await entry(
       to,
       from === 'outside.txt' ? 'private source with unique bytes\n' : 'original source\n'
     )
-    expect(await review(await commit(base))).toMatchObject({
-      status: allowed ? 'scope-checked' : 'rejected'
-    })
+    expect(await review(await commit(base))).toMatchObject(
+      allowed
+        ? { status: 'scope-checked', paths: [to] }
+        : { status: 'rejected', code: 'out_of_scope' }
+    )
   })
+  it.each(['none', 'repository', 'environment'])(
+    'scope semantics: unchanged outside copy source needs no write grant with %s rename configuration',
+    async (configuration) => {
+      await entry('src/copied.txt', 'private source with unique bytes\n')
+      const candidate = await commit(base)
+      if (configuration === 'repository') {
+        await git(['config', 'diff.renames', 'copies'])
+      }
+      if (configuration === 'environment') {
+        vi.stubEnv('GIT_CONFIG_COUNT', '1')
+        vi.stubEnv('GIT_CONFIG_KEY_0', 'diff.renames')
+        vi.stubEnv('GIT_CONFIG_VALUE_0', 'copies')
+      }
+      const result = await review(candidate)
+      expect(result, JSON.stringify(result)).toEqual({
+        status: 'scope-checked',
+        baseCommit: base,
+        candidateCommit: candidate,
+        paths: ['src/copied.txt']
+      })
+    }
+  )
+  it.each(['modify', 'delete'])(
+    'scope semantics: copying still rejects an outside source that also changes: %s',
+    async (operation) => {
+      await entry('src/copied.txt', 'private source with unique bytes\n')
+      await (operation === 'modify'
+        ? entry('outside.txt', 'changed outside source')
+        : remove('outside.txt'))
+      expect(await review(await commit(base))).toMatchObject({
+        status: 'rejected',
+        code: 'out_of_scope'
+      })
+    }
+  )
+  it.each([
+    ['src/node', 'src/node/child.txt', 'src/', true],
+    ['src/node/child.txt', 'src/node', 'src/', true],
+    ['outside', 'outside/child.txt', 'outside/', false],
+    ['outside/child.txt', 'outside', 'outside/', false]
+  ] as const)(
+    'scope semantics: checks old and new tree shapes separately for %s -> %s',
+    async (oldPath, newPath, allowedPath, allowed) => {
+      await entry(oldPath, 'shape transition content')
+      base = await commit(base)
+      plan.baseCommit = base
+      plan.tasks[0].writePaths = [allowedPath]
+      await remove(oldPath)
+      await entry(newPath, 'shape transition content')
+      const candidate = await commit(base)
+      const result = await review(candidate)
+      expect(result, JSON.stringify(result)).toMatchObject(
+        allowed
+          ? { status: 'scope-checked', paths: [oldPath, newPath].sort() }
+          : { status: 'rejected', code: 'out_of_scope' }
+      )
+    }
+  )
   it.each(['120000', '160000', '100755'])('rejects new special mode %s', async (mode) => {
     await entry('src/special', '../outside.txt', mode)
     expect(await review(await commit(base))).toMatchObject({

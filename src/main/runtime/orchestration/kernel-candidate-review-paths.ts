@@ -42,20 +42,17 @@ export function parseChanges(
   const fields = nulRecords(text)
   const changes: Change[] = []
   for (let i = 0; i < fields.length; ) {
-    const match = fields[i++].match(
-      /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) ([AMD]|[RC][0-9]{1,3})$/
-    )
+    const match = fields[i++].match(/^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) ([AMD])$/)
     if (!match || match[3].length !== length || match[4].length !== length) {
       reject('invalid_git_output', 'Unrecognized raw diff record or file type change.')
     }
     const status = match[5][0]
     const first = fields[i++]
-    const second = status === 'R' || status === 'C' ? fields[i++] : first
-    if (!first || !second) {
+    if (!first) {
       reject('invalid_git_output', 'Missing raw diff path.')
     }
     const oldPath = status === 'A' ? undefined : first
-    const newPath = status === 'D' ? undefined : second
+    const newPath = status === 'D' ? undefined : first
     for (const [path, tree, mode, oid] of [
       [oldPath, before, match[1], match[3]],
       [newPath, after, match[2], match[4]]
@@ -94,9 +91,19 @@ export function checkPaths(
   taskKey: string
 ) {
   const task = plan.tasks.find((entry) => entry.key === taskKey)!
-  const lexical = validatePlan({ ...plan, tasks: [{ ...task, dependsOn: [], writePaths: paths }] })
+  // Deleted files and newly created directories do not coexist in either endpoint tree.
+  const invalidShape = [before, after].some((tree) => {
+    const endpointPaths = paths.filter((path) => tree.has(path))
+    return (
+      endpointPaths.length > 0 &&
+      !validatePlan({
+        ...plan,
+        tasks: [{ ...task, dependsOn: [], writePaths: endpointPaths }]
+      }).ok
+    )
+  })
   if (
-    !lexical.ok ||
+    invalidShape ||
     paths.some((path) => path.split('/').some((part) => part.toLowerCase() === '.git'))
   ) {
     reject(

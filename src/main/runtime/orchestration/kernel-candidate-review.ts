@@ -199,10 +199,7 @@ export async function reviewKernelCandidate(
         '--no-ext-diff',
         '--no-textconv',
         '--ignore-submodules=none',
-        '-M',
-        '-C',
-        '--find-copies-harder',
-        '-l0',
+        '--no-renames',
         base,
         candidate,
         '--'
