@@ -1,3 +1,5 @@
+import { kernelDependencyBase, assertKernelDependencyBase } from './kernel-dependency-base'
+import { parseKernelStartBinding } from './kernel-acceptance-policy'
 import { StoredAcceptancePolicy, type AcceptancePolicy } from './kernel-acceptance-policy'
 import type { OrchestrationDb } from './db'
 import { validatePlan, type Plan } from './kernel-plan'
@@ -175,7 +177,8 @@ export function assertKernelTaskBindings(
 export function assertKernelWorkerPolicy(
   db: OrchestrationDb,
   taskId: string,
-  expectedConfig?: string | null
+  expectedConfig?: string | null,
+  execution?: { startOptions: unknown }
 ): void {
   const task = db.getTask(taskId)
   if (!task) {
@@ -204,11 +207,20 @@ export function assertKernelWorkerPolicy(
   if (!planned) {
     throw new OrchestrationError('kernel_task_unapproved', 'Task is not approved by this Run.')
   }
-  if (planned.dependsOn.length > 0) {
-    throw new OrchestrationError(
-      'kernel_dependency_unsupported',
-      'Managed dependent Tasks require trusted acceptance and landed code; native completion is insufficient.'
-    )
+  const base = kernelDependencyBase(db, run, config, taskId)
+  if (base.dependency && execution) {
+    const options = parseKernelStartBinding(JSON.stringify(execution.startOptions))
+    if (
+      options.repo !== `id:${config.repoId}` ||
+      options.baseBranch !== base.baseCommit ||
+      !options.kernelBase
+    ) {
+      throw new OrchestrationError(
+        'kernel_dependency_invalid',
+        'Dispatch requires the server-selected dependency base.'
+      )
+    }
+    assertKernelDependencyBase(base, options.kernelBase)
   }
   assertKernelLimits(db, run.id, taskId, config.limits)
 }

@@ -31,7 +31,9 @@ export function createStartingWorkerDispatch(
 ): { dispatch: DispatchContextRow; worker: WorkerDispatchRow } {
   this.db.exec('BEGIN IMMEDIATE')
   try {
-    assertKernelWorkerPolicy(this, params.taskId, params.expectedKernelConfig)
+    assertKernelWorkerPolicy(this, params.taskId, params.expectedKernelConfig, {
+      startOptions: params.startOptions
+    })
     if (params.mutationReceipt) {
       const receipt = params.mutationReceipt
       const existing = this.getMutationReceipt(receipt.callerFingerprint, receipt.requestId)

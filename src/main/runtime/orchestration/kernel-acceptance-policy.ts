@@ -1,5 +1,6 @@
 import { OrchestrationError } from './orchestration-error'
 import { z } from 'zod'
+import type { RunRow, TaskRow, DispatchContextRow, WorkerDispatchRow } from './types'
 
 // Approved code is trusted executable input, never taken from the candidate or Plan.acceptance.
 const Check = z
@@ -29,10 +30,45 @@ export const StoredAcceptancePolicy = z
   .strict()
 export type AcceptancePolicy = z.infer<typeof StoredAcceptancePolicy>
 
+export const KernelDependency = z
+  .object({
+    task: z.string(),
+    dispatch: z.string(),
+    candidate: z.string(),
+    token: z.string().uuid(),
+    approvalId: z.string().uuid(),
+    binding: z.string(),
+    location: z.string()
+  })
+  .strict()
+export const KernelBase = z
+  .object({
+    baseCommit: z.string(),
+    dependency: KernelDependency.optional()
+  })
+  .strict()
+export type KernelBase = z.infer<typeof KernelBase>
+
+export function kernelAcceptanceStamp(
+  run: RunRow,
+  task: TaskRow,
+  dispatch: DispatchContextRow,
+  worker: WorkerDispatchRow
+): string {
+  return JSON.stringify({
+    config: run.kernel_config,
+    generation: run.consumer_generation,
+    task: { ...task, kernel_acceptance: undefined, result: undefined },
+    dispatch,
+    worker
+  })
+}
+
 const StartBinding = z.object({
   repo: z.string(),
   baseBranch: z.string(),
-  worktree: z.literal('new-top-level')
+  worktree: z.literal('new-top-level'),
+  kernelBase: KernelBase.optional()
 })
 export const AcceptedBinding = z
   .object({

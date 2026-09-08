@@ -653,7 +653,7 @@ describe('Kernel service admission', () => {
       await configure()
       db.db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(taskId)
       db.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(status, dependencyId)
-      await expect(start()).rejects.toMatchObject({ code: 'kernel_dependency_unsupported' })
+      await expect(start()).rejects.toMatchObject({ code: 'kernel_dependency_invalid' })
       expectNoEffects()
     }
   )

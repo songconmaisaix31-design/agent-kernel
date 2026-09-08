@@ -1,6 +1,5 @@
 import type { TuiAgent } from '../../../../shared/tui-agent'
 import { buildDispatchPreamble } from '../../orchestration/preamble'
-import { kernelTaskSpec } from '../../orchestration/kernel-task-contract'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 import { defineMethod, type RpcMethod } from '../core'
 import { startFederatedWorker } from './orchestration-federated-worker-start'
@@ -21,11 +20,7 @@ import {
 } from './orchestration-worker-setup-gate'
 import { failWorkerStartWithReceipt } from './orchestration-worker-start-receipt'
 import { prepareLocalWorkerStart } from './orchestration-worker-start-validation'
-import {
-  admitKernelWorkerStart,
-  requireKernelLocalRepo,
-  recheckKernelWorkerStart
-} from './orchestration-kernel-admission'
+import { prepareKernelWorkerStart, requireKernelLocalRepo } from './orchestration-kernel-admission'
 
 export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
   defineMethod({
@@ -52,13 +47,20 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         )
       }
 
-      const kernelSnapshot = admitKernelWorkerStart(
+      const {
+        snapshot: kernelSnapshot,
+        base: kernelBase,
+        taskSpec,
+        recheckBase,
+        recheckAdmission
+      } = prepareKernelWorkerStart(
         runtime,
         run.id,
         params,
+        task.spec,
         orchestrationCompatibilityEvidence
       )
-      const taskSpec = kernelTaskSpec(kernelSnapshot, task.id, task.spec)
+      await recheckBase()
       if (params.on) {
         return startFederatedWorker({
           params,
@@ -111,7 +113,9 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
       if (kernelSnapshot !== null) {
         await requireKernelLocalRepo(runtime, kernelSnapshot, params)
       }
+      await recheckBase()
       const startOptions = {
+        ...(kernelBase?.dependency ? { kernelBase } : {}),
         worktree: requestedWorktree,
         resolvedWorktreeId: resolvedWorktree?.id ?? null,
         name: params.name ?? null,
@@ -128,13 +132,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
             : 'orchestration_default'
           : 'existing_worktree'
       }
-      recheckKernelWorkerStart(
-        runtime,
-        run.id,
-        params,
-        kernelSnapshot,
-        orchestrationCompatibilityEvidence
-      )
+      recheckAdmission()
       const started = db.createStartingWorkerDispatch({
         taskId: task.id,
         expectedKernelConfig: kernelSnapshot,
@@ -220,6 +218,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         }
         persistWorkerReadinessStage(setupStage)
 
+        await recheckBase(resolvedWorktree.id)
         failedStage = 'agent_readiness'
         const wait = await runtime.waitForTerminal(terminalHandle, {
           condition: 'tui-idle',
@@ -258,6 +257,8 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           devMode: params.devMode,
           cliCommand: runtime.getTerminalOrchestrationCliCommand(terminalHandle)
         })
+        const recheckDelivery = await recheckBase(resolvedWorktree.id)
+        recheckDelivery()
         await runtime.sendTerminalAgentPrompt(terminalHandle, preamble)
         effects.push({
           kind: 'dispatch_input',
@@ -277,6 +278,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         return {
           runId: run.id,
           taskId: task.id,
+          ...(kernelBase?.dependency ? { kernelBase } : {}),
           dispatchId: started.dispatch.id,
           state: worker.state,
           stage: worker.stage,

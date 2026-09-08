@@ -1,3 +1,9 @@
+import {
+  reviewKernelTaskCandidate,
+  kernelDependencyBase,
+  assertKernelDependencyBase,
+  verifyKernelDependencyLocation
+} from './kernel-dependency-base'
 import { resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { OrcaRuntimeService } from '../orca-runtime'
@@ -10,10 +16,10 @@ import {
 } from './kernel-run-config'
 import {
   AcceptanceChecks,
+  kernelAcceptanceStamp,
   parseKernelStartBinding,
   readKernelAcceptanceRecord
 } from './kernel-acceptance-policy'
-import { reviewKernelCandidate } from './kernel-candidate-review'
 import {
   acceptanceEnvironment,
   createCandidateSnapshot,
@@ -99,14 +105,9 @@ export function kernelAcceptanceBinding(context: Context, request: AcceptanceReq
     !worker.worktree_id ||
     db.db.prepare('SELECT 1 FROM federated_dispatches WHERE dispatch_id = ?').get(dispatch.id)
   ) {
-    fail(
-      'kernel_dispatch_mismatch',
-      'Acceptance requires this Task’s latest successfully settled local supervised Dispatch.'
-    )
+    fail('kernel_dispatch_mismatch', 'Acceptance requires the latest successful local Dispatch.')
   }
-  if (planned.dependsOn.length) {
-    fail('kernel_dependency_unsupported', 'Dependent Tasks remain unsupported.')
-  }
+  const base = kernelDependencyBase(db, run, config, request.task)
   if (!planned.spec) {
     fail('kernel_task_body_required', 'Approve the Task body before acceptance.')
   }
@@ -117,19 +118,19 @@ export function kernelAcceptanceBinding(context: Context, request: AcceptanceReq
   const options = parseKernelStartBinding(worker.start_options)
   if (
     options.repo !== `id:${config.repoId}` ||
-    options.baseBranch !== config.plan.baseCommit ||
+    options.baseBranch !== base.baseCommit ||
     options.worktree !== 'new-top-level'
   ) {
     fail('kernel_dispatch_mismatch', 'Dispatch repository/base differs from the approved plan.')
   }
-  const stamp = JSON.stringify({
-    config: run.kernel_config,
-    generation: run.consumer_generation,
-    task: { ...task, kernel_acceptance: undefined, result: undefined },
-    dispatch,
-    worker
-  })
-  return { run, config, task, worker, check, stamp }
+  if (base.dependency) {
+    if (!options.kernelBase) {
+      fail('kernel_dependency_invalid', 'Dispatch has no persisted dependency base.')
+    }
+    assertKernelDependencyBase(base, options.kernelBase)
+  }
+  const stamp = kernelAcceptanceStamp(run, task, dispatch, worker)
+  return { run, config, task, worker, check, stamp, base }
 }
 export async function kernelAcceptanceLocation(
   context: Context,
@@ -164,6 +165,7 @@ export async function kernelAcceptanceLocation(
   if ((await snapshotGit(source, ['rev-parse', '--verify', 'HEAD'])).trim() !== request.candidate) {
     fail('kernel_candidate_changed', 'Candidate must equal the bound Worker worktree HEAD.')
   }
+  await verifyKernelDependencyLocation(context.runtime, initial.config.repoId, initial.base)
   return { repoPath, source, identity }
 }
 export async function acceptKernelCandidate(context: Context, request: AcceptanceRequest) {
@@ -176,14 +178,13 @@ export async function acceptKernelCandidate(context: Context, request: Acceptanc
   const db = context.runtime.getOrchestrationDb(),
     initial = kernelAcceptanceBinding(context, request)
   const local = await kernelAcceptanceLocation(context, request, initial)
-  const scope = await reviewKernelCandidate({
-    plan: initial.config.plan,
-    taskKey: request.task,
-    repoPath: local.source,
-    baseCommit: initial.config.plan.baseCommit,
-    candidateCommit: request.candidate,
-    executionHost: 'native'
-  })
+  const scope = await reviewKernelTaskCandidate(
+    initial.config.plan,
+    request.task,
+    local.source,
+    initial.base,
+    request.candidate
+  )
   if (scope.status !== 'scope-checked') {
     fail(scope.code, scope.message)
   }
@@ -192,6 +193,7 @@ export async function acceptKernelCandidate(context: Context, request: Acceptanc
   }
   const record = {
     status: 'checking',
+    kernelBase: initial.base,
     ...request,
     approvalId: initial.config.acceptancePolicy!.approvalId,
     binding: initial.stamp,

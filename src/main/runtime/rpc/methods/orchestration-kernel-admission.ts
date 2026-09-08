@@ -1,9 +1,17 @@
+import { kernelTaskSpec } from '../../orchestration/kernel-task-contract'
+import {
+  kernelDependencyBase,
+  assertKernelDependencyBase,
+  verifyKernelDependencyLocation
+} from '../../orchestration/kernel-dependency-base'
+import type { KernelBase } from '../../orchestration/kernel-acceptance-policy'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import { isWslUncPath } from '../../../../shared/wsl-paths'
 import type { OrchestrationCompatibilityEvidence } from '../../../../shared/orchestration-compatibility-evidence'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import {
   assertKernelWorkerPolicy,
+  assertKernelTaskBindings,
   assertKernelRunOwner,
   readKernelRunConfig
 } from '../../orchestration/kernel-run-config'
@@ -107,9 +115,10 @@ export function admitKernelWorkerStart(
     )
   }
   assertKernelWorkerPolicy(db, params.task, run.kernel_config)
+  const base = kernelDependencyBase(db, run, config, params.task)
   if (
     (params.repo && params.repo !== config.repoId && params.repo !== `id:${config.repoId}`) ||
-    (params.baseBranch && params.baseBranch !== config.plan.baseCommit)
+    (params.baseBranch && params.baseBranch !== base.baseCommit)
   ) {
     throw new OrchestrationError(
       'kernel_start_mismatch',
@@ -117,7 +126,7 @@ export function admitKernelWorkerStart(
     )
   }
   params.repo = `id:${config.repoId}`
-  params.baseBranch = config.plan.baseCommit
+  params.baseBranch = base.baseCommit
   return run.kernel_config as string
 }
 
@@ -171,5 +180,77 @@ export function rejectKernelDispatch(runtime: OrcaRuntimeService, run: RunRow): 
       'kernel_unsupported_path',
       'Kernel Runs require supervised workerStart, not low-level dispatch.'
     )
+  }
+}
+
+export function kernelWorkerBase(
+  runtime: OrcaRuntimeService,
+  runId: string,
+  taskId: string
+): KernelBase | null {
+  const db = runtime.getOrchestrationDb(),
+    run = db.getRun(runId)
+  if (!run) {
+    throw new OrchestrationError('run_not_found', 'The Worker Run no longer exists.')
+  }
+  const config = readKernelRunConfig(run)
+  if (!config) {
+    return null
+  }
+  assertKernelTaskBindings(db, runId, config)
+  return kernelDependencyBase(db, run, config, taskId)
+}
+
+export async function recheckKernelWorkerBase(
+  runtime: OrcaRuntimeService,
+  runId: string,
+  params: WorkerStartInput,
+  snapshot: string | null,
+  base: KernelBase | null,
+  evidence?: OrchestrationCompatibilityEvidence,
+  worktreeId?: string
+): Promise<() => void> {
+  const recheck = () => {
+    const run = runtime.getOrchestrationDb().getRun(runId)
+    if (!run || (run.kernel_config ?? null) !== snapshot) {
+      throw new OrchestrationError(
+        'kernel_config_changed',
+        'Run policy changed during Worker preparation.'
+      )
+    }
+    if (base) {
+      requireKernelCoordinator(runtime, runId, params.from, evidence)
+      assertKernelDependencyBase(kernelWorkerBase(runtime, runId, params.task)!, base)
+    }
+  }
+  recheck()
+  if (base?.dependency) {
+    await verifyKernelDependencyLocation(runtime, params.repo!.slice(3), base, worktreeId)
+  }
+  recheck()
+  return recheck
+}
+
+export function prepareKernelWorkerStart(
+  runtime: OrcaRuntimeService,
+  runId: string,
+  params: WorkerStartInput,
+  nativeSpec: string,
+  evidence?: OrchestrationCompatibilityEvidence
+) {
+  const snapshot = admitKernelWorkerStart(runtime, runId, params, evidence)
+  const base = kernelWorkerBase(runtime, runId, params.task)
+  const taskSpec =
+    kernelTaskSpec(snapshot, params.task, nativeSpec) +
+    (base?.dependency
+      ? `\nServer-selected actual execution base (supersedes the Plan base for this Task checkout): ${base.baseCommit}\nAccepted parent Task: ${base.dependency.task}; Dispatch: ${base.dependency.dispatch}.`
+      : '')
+  return {
+    snapshot,
+    base,
+    taskSpec,
+    recheckAdmission: () => recheckKernelWorkerStart(runtime, runId, params, snapshot, evidence),
+    recheckBase: (worktreeId?: string) =>
+      recheckKernelWorkerBase(runtime, runId, params, snapshot, base, evidence, worktreeId)
   }
 }
