@@ -1,5 +1,6 @@
 import type { OrchestrationDb } from './db'
 import { OrchestrationError } from './orchestration-error'
+import { isEquivalentPaneKey } from './db/pane-key-match'
 
 export type KernelLimits = {
   maxConcurrentWorkers: number
@@ -58,20 +59,91 @@ export function parseKernelLimits(input: unknown, defaultMaxAttempts: number): K
 
 export function kernelOccupiedSlots(db: OrchestrationDb, runId: string): number {
   // Count a Dispatch once even if several native records indicate that it still owns resources.
-  const row = db.db
+  const rows = db.db
     .prepare(`
-    SELECT COUNT(*) AS occupied FROM dispatch_contexts dispatch WHERE dispatch.run_id = ? AND (
+    SELECT dispatch.id, worker.residual_resources, (
       dispatch.status IN ('pending', 'dispatched')
-      OR EXISTS (SELECT 1 FROM worker_dispatches worker WHERE worker.dispatch_id = dispatch.id AND (
-        worker.state NOT IN ('succeeded', 'failed', 'stopped', 'abandoned')
-        OR worker.residual_resources != '[]'
-      ))
+      OR COALESCE(worker.state NOT IN ('succeeded', 'failed', 'stopped', 'abandoned'), 0)
       OR EXISTS (SELECT 1 FROM worker_terminal_resources resource WHERE resource.owner_dispatch_id = dispatch.id
         AND (resource.ownership_state != 'released' OR resource.release_state != 'released'))
-    )
+    ) AS occupied
+    FROM dispatch_contexts dispatch
+    LEFT JOIN worker_dispatches worker ON worker.dispatch_id = dispatch.id
+    WHERE dispatch.run_id = ?
   `)
-    .get(runId) as { occupied: number }
-  return row.occupied
+    .all(runId) as { id: string; occupied: number; residual_resources: string | null }[]
+  return rows.filter(
+    (row) => row.occupied || hasUnreleasedKernelResiduals(db, row.id, row.residual_resources)
+  ).length
+}
+
+function hasUnreleasedKernelResiduals(
+  db: OrchestrationDb,
+  dispatchId: string,
+  serialized: string | null
+): boolean {
+  if (serialized === null || serialized === '[]') {
+    return false
+  }
+  let residuals: unknown
+  try {
+    residuals = JSON.parse(serialized)
+  } catch {
+    return true
+  }
+  if (!Array.isArray(residuals)) {
+    return true
+  }
+  if (residuals.length === 0) {
+    return false
+  }
+  const worker = db.getWorkerDispatch(dispatchId)
+  const dispatch = db.getDispatchContextById(dispatchId)
+  const resource = db.getWorkerTerminalResourceByOwner(dispatchId)
+  // Historical creation receipts survive release; only the exact native owner can discharge them.
+  if (
+    !worker ||
+    !dispatch ||
+    !resource ||
+    resource.origin_dispatch_id !== dispatchId ||
+    resource.owner_dispatch_id !== dispatchId ||
+    resource.ownership_state !== 'released' ||
+    resource.release_state !== 'released' ||
+    resource.host_scope !== null ||
+    db.getFederatedDispatch(dispatchId) ||
+    !worker.worktree_id?.includes('::') ||
+    worker.worktree_id.startsWith('folder:') ||
+    resource.worktree_id !== worker.worktree_id ||
+    resource.terminal_handle !== worker.agent_terminal_handle ||
+    resource.terminal_handle !== dispatch.assignee_handle ||
+    !resource.pane_key ||
+    !dispatch.assignee_pane_key ||
+    !isEquivalentPaneKey(resource.pane_key, dispatch.assignee_pane_key) ||
+    !resource.process_incarnation ||
+    resource.process_incarnation !== dispatch.process_incarnation
+  ) {
+    return true
+  }
+  return residuals.some((entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return true
+    }
+    const residual = entry as Record<string, unknown>
+    if (residual.kind === 'worktree') {
+      return (
+        residual.id !== resource.worktree_id ||
+        !['created_child', 'created_top_level'].includes(residual.action as string)
+      )
+    }
+    if (residual.kind === 'terminal') {
+      return (
+        residual.id !== resource.terminal_handle ||
+        residual.role !== 'agent' ||
+        !['created', 'reused_agent_terminal'].includes(residual.action as string)
+      )
+    }
+    return true
+  })
 }
 
 export function assertKernelLimits(
