@@ -85,7 +85,8 @@ describe('private terminal readiness diagnostics', () => {
       'API_KEY=private-test-value',
       'Authorization: Bearer private-bearer',
       '{"access_token":"private-json-value"}',
-      "$env:ORCA_LAUNCH_TOKEN='private-shell-value'"
+      "$env:ORCA_LAUNCH_TOKEN='private-shell-value'",
+      'orca send --dispatch-capability dcap_private-test-value'
     ]
     new TerminalReadinessDiagnostics(env).record('term_test', () => input)
     const saved = readFileSync(join(directory, 'runtime-test-1.json'), 'utf8')
@@ -93,6 +94,7 @@ describe('private terminal readiness diagnostics', () => {
     expect(saved).not.toContain('private-bearer')
     expect(saved).not.toContain('private-json-value')
     expect(saved).not.toContain('private-shell-value')
+    expect(saved).not.toContain('dcap_private-test-value')
     expect(JSON.parse(saved).redactionChangedInputs).toBe(true)
     expect(input.inputs.tailBuffer[0]).toBe('API_KEY=private-test-value')
   })

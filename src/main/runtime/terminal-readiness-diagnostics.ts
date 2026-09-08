@@ -21,10 +21,12 @@ export type ReadinessDiagnosticSnapshot = {
 }
 
 function redactDiagnosticText(text: string): string {
-  return redactString(text).replace(
-    /(["']?[\w.-]*(?:token|secret|password|api[_-]?key|authorization|cookie|credential)[\w.-]*["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi,
-    '$1[redacted]'
-  )
+  return redactString(text)
+    .replace(/\bdcap_[a-zA-Z0-9_-]+\b/g, '[redacted:dispatch-capability]')
+    .replace(
+      /(["']?[\w.-]*(?:token|secret|password|api[_-]?key|authorization|cookie|credential)[\w.-]*["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi,
+      '$1[redacted]'
+    )
 }
 
 // Opt-in private experiment files; no RPC, polling, process inspection or decision authority.
@@ -35,6 +37,12 @@ export class TerminalReadinessDiagnostics {
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   record(handle: string, snapshot: () => ReadinessDiagnosticSnapshot): void {
+    if (
+      this.config &&
+      (this.count >= this.config.maxSnapshots || handle !== this.config.terminal)
+    ) {
+      return
+    }
     if (
       this.env.ORCA_EXPERIMENT_READINESS_DIAGNOSTICS !== '1' ||
       !this.env.ORCA_EXPERIMENT_CODEX_SYSTEM_HOME ||
