@@ -1,3 +1,18 @@
+## P2 首批：单个已接纳依赖作为实际起点（2026-09-08）
+
+当前仅支持下游一个父任务、且父任务无依赖的 native Git 链。仍使用原 `worker-start` / `kernel-accept`：先批准完整 Plan 及父子各自的受信验收策略，父任务真实接纳后再派发子任务；省略 `--base-branch` 由服务端选择父 candidate SHA，显式值必须相同。无依赖任务继续使用批准 Plan.baseCommit；多父、深链、SSH/WSL、普通目录明确不支持。
+
+| 规则 | owner / 执行点 | 失败处理 | 证据层次 / 状态 |
+|---|---|---|---|
+| 父 accepted 必须匹配当前 Run、批准策略、最新成功 settled Dispatch 和原生 Git worktree HEAD | B / kernel-dependency-base、managed admission | completed、scope-checked、自报、旧身份/策略/候选不能选为起点 | 真实 Git/SQLite 服务测试；程序已执行 |
+| 实际 baseBranch 与父接纳绑定写入原 start_options；原事务复核、限额不变 | B / createStartingWorkerDispatch | 创建前已失效则无新 Dispatch/执行资源；不重置尝试累计 | 原事务与真实工作树回归；程序已执行 |
+| 异步准备后及正文发送前复核；最后紧邻发送再同步检查身份/DB | B / 原 workerStart 及失败回执 | 原生 agent-first 期间可已创建 Agent/资源；阻止正文送达并保留准确资源记录，不声称从未启动或已清理 | 终端/Agent 是替身，不是真实 Worker；程序已执行 |
+| 子验收仅检查实际起点到子候选的自身净差异 | B / P1 kernelAccept 与原只读范围检查 | 先验证完整批准 Plan/父绑定，再由服务端派生单任务审核视图；继承文件不计子写权，子实际越界仍拒绝 | 真实 Git 差异及受信 Node 验收；程序已执行 |
+
+结果、派发正文和接纳记录给出实际 `kernelBase`/父 Task/Dispatch；原 Plan 保持批准基线，不由请求改写。接纳记录是历史固定候选结果，当前有效性须经 `kernel-accept`（含缓存回放）重新验证；父记录/策略/HEAD 失效后不能继续派发或复用子接纳。Git 观察与 DB 事务不是跨进程文件锁，也不是文件系统沙箱；受信检查仍沿 P1 的可执行策略边界。accepted 不等于跨轨 integrated，未完成 P2 全链或 P0 真实 Worker 验收，未启动模型、Electron 或正式比较。
+
+本批验证：14 文件发现/执行 542/542（含新增 27 例），Node/CLI 类型、9 个变更 TS 原 lint/format、main 构建与 diff check 通过。仓外 `evidence/continuation-20260908-003901/P2-dependency-base` 的 report 记录实际命令、固定临时候选 SHA 与首轮失败；真实运行证据仅覆盖上述服务/Git边界。当前 GitHub TLS 已被总控诊断失败，按指令暂停 push/远端查询；本地提交与远端发布分开记录。下文保留各历史批次当时状态。
+
 ## P1：受信成果接纳入口（2026-09-08）
 
 当前入口为 `orchestration.kernelApproveAcceptance` / `orchestration.kernelAccept`，复用已验证协调者的 Run fencing、服务端计划、原 Task/监督 Dispatch、既有 Git/进程执行器及 SQLite。原生 `completed`、Worker 自报和 `scope-checked` 均不能写入 `tasks.kernel_acceptance` 的 accepted；普通 TaskStatus/result 保持原义。下文历史批次的“未实现”描述保留其原时间口径。
