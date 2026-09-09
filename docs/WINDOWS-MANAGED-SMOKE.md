@@ -1,5 +1,51 @@
 # Windows managed smoke — 2026-09-07
 
+## Validated core loop — 2026-09-09
+
+The bounded Windows/native-Git collaboration passed on product main
+`3538e109d20a056cd7a05873f0e604c15b7222f7`, with the verified compatible
+`c388772fe7c24d490cd4e583b67a76b6c1eee50e` CLI and daemon. Runtime
+`a42883c9-92ba-49a7-8292-5b32558949d6` ran the collaboration. Readiness diagnostics
+remained off. The historical sections below retain their original failures and
+scope; they do not supersede this result.
+
+The successful operation sequence, using the existing native entry points:
+
+1. Start the matching experiment with `node config/scripts/run-windows-managed-smoke.mjs`
+   in the candidate checkout, or reuse its already verified running instance.
+   Keep the experiment profile, CLI wrapper and authentication separate from daily Orca.
+2. Create the coordinator through `RuntimeClient.call('terminal.createAgentSession', ... )`
+   with `agent: 'codex'`, `launchPreferences: { model: 'gpt-5.6-terra', effort: 'medium' }`,
+   `presentation: 'background'`, the experiment worktree and a native operation ID.
+   Native startup generates identity; arbitrary shell model flags do not.
+3. From that coordinator's own terminal, use its matching CLI for `orchestration run-create`
+   and `task-create`, then `run-use --id <own-run> --kernel-config <approved-plan.json>`
+   and `kernel-approve-acceptance --run <own-run> --checks <trusted-checks.json>`.
+   Approve all three task bodies, the fixed base, disjoint consumer write paths,
+   dependencies, limits and independent check sources before starting. The original
+   successful invocations are preserved privately; their old IDs are not reusable authority.
+4. `worker-start` the parent once. Observe `input_accepted` and normal completion,
+   then `kernel-accept --run <own-run> --task <parent> --dispatch <exact-dispatch> --candidate <full-sha>`.
+   Only accepted permits dependent starts. Use native `worker-release`, preserve the
+   worktree, and verify acceptance remains current. Keep the Run, binding and policy stable.
+5. Start A/B once each, within actual free capacity, with that parent as their sole
+   dependency. This run explicitly supplied `--base-branch <accepted-parent-sha>`;
+   verify each returned `kernelBase` and actual Git start. Accept each fixed candidate
+   using its own trusted check, then settle its exact resource normally.
+6. In the integration worktree starting at the parent SHA, use ordinary
+   `git merge --no-ff --no-edit <A-sha>` and then `<B-sha>`. Run the original three
+   trusted checks against the combined tree. Preserve the fixed commits, native
+   acceptance summaries and separate workspaces; never merge experiment business
+   code into the product repository.
+
+All implicit caller identity comes from the legitimate coordinator terminal;
+do not copy tokens or fabricate `--from`. An unknown release is not a free slot:
+read its exact native recovery result and preserve both the initial and final
+receipts. Save current acceptance summaries before any binding change. This
+sequence documents an executed result, not permission for another paid batch.
+Worker usage is now 8/8; no repeat run or stop test is part of delivery closeout.
+See [fixed artifacts and limitations](ORCA-INTEGRATION.md).
+
 ## Private readiness observation (default off)
 
 Only the Fork experiment launcher accepts `--readiness-diagnostics`. Before a

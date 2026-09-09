@@ -5,11 +5,13 @@
 > preserving [Orca](https://github.com/stablyai/orca) history, authors and the
 > [MIT license](LICENSE). The upstream baseline remains **v1.4.188**.
 >
-> A real candidate coordinator, persisted Kernel plan, one Worker artifact and
-> one trusted acceptance have been demonstrated. The failed-start stop fix has
-> local regression coverage; real stop, parent-to-consumer dependency execution
-> and combined integration remain unverified. Historical acceptance is not reusable
-> cross-Run authority. CURRENT/KERNEL formal comparisons have not run.
+> The bounded Windows/native-Git v0.1 core loop has passed real execution:
+> normal supervised stop, parent completion and trusted acceptance, two parallel
+> consumers starting from that accepted parent, and Git combination with all three
+> trusted checks passing. Tested product main: `3538e109`; verified compatible
+> CLI/daemon: `c388772f`. Experimental business commits remain separate.
+> Historical acceptance is not reusable cross-Run authority. This is a development
+> preview, not a cross-platform stability or CURRENT/KERNEL effectiveness result.
 > See [current status](V01-TODO.md) and [implementation and validation](docs/ORCA-INTEGRATION.md).
 > Upstream features and download links below describe Orca, not a released Kernel build.
 

@@ -1,4 +1,23 @@
-## 实验协调者的原生启动（2026-09-09）
+## v0.1 限定场景真实闭环交付（2026-09-09）
+
+Windows 本地 native Git 场景已通过：合法协调身份与 Kernel 持久化、真实正常停止、父任务输入确认/完成/可信接纳、两个互斥消费者从有效父提交起步并行执行、固定 Git 组合后的三项受信检查。产品源码/main 固定 `3538e109d20a056cd7a05873f0e604c15b7222f7`；CLI/daemon 复用已核验的 `c388772fe7c24d490cd4e583b67a76b6c1eee50e` 产物。后续说明提交不代表运行构建更新。
+
+| 实验角色 | 固定提交 | Task / Dispatch |
+|---|---|---|
+| 父 / contract.cjs | `37670e682e8afb90292467f03beabf728e30f082` | `task_5c30d5fa7ffb` / `ctx_291d64b4aea8` |
+| A / consumer-a.cjs | `20eea7d67419fc9db4a5702dd195bcf3c2574236` | `task_49cdd0e3a442` / `ctx_b969d01f7e8e` |
+| B / consumer-b.cjs | `5841ba55adb545b6146ce91776aed4330dd67729` | `task_548ab46947f4` / `ctx_fd0e6d4cd753` |
+| Git 组合 / 原三个检查 exit 0 | `cb220037cb35d3d00b3bde9bf43e02b07e877a96` | 工具组装，无额外 Worker 或领域改写 |
+
+这些提交位于独立实验小仓库，未并入产品。父基线 `fa9c84e21297cc10fe6a3e8cac5d4f126c90fafe`，两个消费者实际 Git 起点均为上述父提交；三任务各一次，无重派。稳定 Run `run_b840c2d50966` / generation 1 内三项 accepted 已经原生只读复核；三 Worker 最终 released。并行时序、原受信检查、组合记录与四分支增量 bundle 私有保存在 `parent-retest-20260909-191945/delivery-closeout`；bundle 需要上述父基线，工作区和报告另存，不能当完整备份。
+
+最短成功路径见 [Windows 操作记录](WINDOWS-MANAGED-SMOKE.md#validated-core-loop--2026-09-09)。主控负责批准、验收和 Git 组合；父/A/B 分别独占表中写域。计划/权限、固定候选范围及可信接纳由程序检查；并行起点和组合行为有本次真实运行证据。受信 Node 检查是批准者认可的可执行代码，不是沙箱。
+
+限制：本次只证明单个无依赖父任务到两个消费者的本地链；SSH/WSL、普通目录依赖链及多父/深链不在支持范围，macOS/Linux 未实测。真实失败启动后的停止仍未覆盖。释放中间 `release_unknown/tab_not_found` 与最终原生 `released` 分别保留。旧 Run 解绑会使旧接纳不再是当前授权，未回填记录。Hook→PTY 的受控连接缺口已修复，但旧父事故未完整归因；本次内部计数未直接观测，也未证明 Hook 是输入确认的唯一来源。既有静态诊断保留。未执行正式 CURRENT/KERNEL 比较，不作效果或全平台稳定性结论；下一阶段为有限内测与效果验证，不扩 v0.1 功能。
+
+以下各节保留历史批次当时的验证层级和失败，不代表当前仍未完成上述闭环。
+
+## 实验协调者的原生启动（2026-09-09，历史阶段记录）
 
 匹配候选的原生 `terminal.createAgentSession` 接收 `{ clientOperationId, worktree, agent: 'codex', launchPreferences: { model: 'gpt-5.6-terra', effort: 'medium' }, presentation: 'background' }`；由现有 `RuntimeClient.call` 发送，身份由启动流程生成。`clientOperationId` 使用原生格式并逐次保存，结果不明先查资源，不盲目重建。不要向 `terminal create` 添加它不支持的模型参数，也不要将任意带参数 shell 命令当成受管启动。c388772f 实验中 `focused` 分支等待 renderer handle 超时，原生会话枚举确认未新增执行资源后改用 `background` 成功。随后由新协调者自己的终端调用匹配 CLI 的 `run-create`、`task-create`、`run-use --id <自身 Run> --kernel-config <批准文件>` 和 `kernel-approve-acceptance`，真实持久化通过；没有接管旧 owner 的 Run。完整调用及脱敏回执保留在私有实验目录，不复制身份凭据。本结果只证明协调身份和配置，不代替 Worker、停止或依赖整合验收。
 
