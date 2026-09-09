@@ -1,3 +1,7 @@
+## 实验协调者的原生启动（2026-09-09）
+
+匹配候选的原生 `terminal.createAgentSession` 接收 `{ clientOperationId, worktree, agent: 'codex', launchPreferences: { model: 'gpt-5.6-terra', effort: 'medium' }, presentation: 'background' }`；由现有 `RuntimeClient.call` 发送，身份由启动流程生成。`clientOperationId` 使用原生格式并逐次保存，结果不明先查资源，不盲目重建。不要向 `terminal create` 添加它不支持的模型参数，也不要将任意带参数 shell 命令当成受管启动。c388772f 实验中 `focused` 分支等待 renderer handle 超时，原生会话枚举确认未新增执行资源后改用 `background` 成功。随后由新协调者自己的终端调用匹配 CLI 的 `run-create`、`task-create`、`run-use --id <自身 Run> --kernel-config <批准文件>` 和 `kernel-approve-acceptance`，真实持久化通过；没有接管旧 owner 的 Run。完整调用及脱敏回执保留在私有实验目录，不复制身份凭据。本结果只证明协调身份和配置，不代替 Worker、停止或依赖整合验收。
+
 ## P2 首批：单个已接纳依赖作为实际起点（2026-09-08）
 
 当前仅支持下游一个父任务、且父任务无依赖的 native Git 链。仍使用原 `worker-start` / `kernel-accept`：先批准完整 Plan 及父子各自的受信验收策略，父任务真实接纳后再派发子任务；省略 `--base-branch` 由服务端选择父 candidate SHA，显式值必须相同。无依赖任务继续使用批准 Plan.baseCommit；多父、深链、SSH/WSL、普通目录明确不支持。
