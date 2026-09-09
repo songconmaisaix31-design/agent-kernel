@@ -81,6 +81,7 @@ export function failDispatch(
 ): DispatchContextRow | undefined {
   this.db.exec(`SAVEPOINT ${FAIL_DISPATCH_SAVEPOINT}`)
   try {
+    // An explicit stop owns settlement even when closing emits a process-exit callback.
     const result = this.db
       .prepare(
         `UPDATE dispatch_contexts
@@ -90,6 +91,11 @@ export function failDispatch(
              completed_at = COALESCE(completed_at, datetime('now')),
              capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
          WHERE id = ? AND status IN ('pending', 'dispatched')
+           AND NOT EXISTS (
+             SELECT 1 FROM worker_dispatches worker
+             WHERE worker.dispatch_id = dispatch_contexts.id
+               AND worker.state IN ('stopping', 'stop_unknown')
+           )
            AND (? = 1 OR NOT EXISTS (
              SELECT 1 FROM worker_dispatches worker
              WHERE worker.dispatch_id = dispatch_contexts.id
