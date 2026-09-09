@@ -111,6 +111,8 @@ import {
   type AgentPromptActivity,
   verifyAgentPromptSubmission
 } from './agent-prompt-submission-verification'
+import type { AgentHookEventPayload } from '../../shared/agent-hook-listener'
+import type { WithAgentStatusObservation } from '../../shared/agent-status-observation'
 import {
   awaitWindowsHostGitEnvironmentReady,
   gitExecFileAsync,
@@ -3620,6 +3622,11 @@ export class OrcaRuntimeService {
   private terminalSideEffectLocalConsumerAvailable = false
   private terminalSideEffectConsumerAvailable = false
   private readonly getAgentStatusSnapshotFn: (() => AgentStatusIpcPayload[]) | null
+  private readonly subscribeAgentPromptStatus:
+    | ((
+        listener: (event: AgentHookEventPayload & WithAgentStatusObservation) => void
+      ) => () => void)
+    | null
   private readonly getAgentProviderSessionSnapshotFn: (() => AgentStatusIpcPayload[]) | null
   private readonly getAgentProviderSessionRowsForPaneFn:
     | ((paneKey: string) => AgentStatusIpcPayload[])
@@ -3700,6 +3707,9 @@ export class OrcaRuntimeService {
       // terminal output. worktree.ps reads this at query time so mobile shows the
       // same inline agent rows the desktop sidebar does — same source, 1:1.
       getAgentStatusSnapshot?: () => AgentStatusIpcPayload[]
+      subscribeAgentPromptStatus?: (
+        listener: (event: AgentHookEventPayload & WithAgentStatusObservation) => void
+      ) => () => void
       /** Same rows, but including the resume-identity-only ones `getAgentStatusSnapshot`
        *  filters out so they can't read as running agents. Mobile native chat needs
        *  them: for an agent that publishes identity separately (Pi), that row is the
@@ -3748,6 +3758,7 @@ export class OrcaRuntimeService {
       this.stats = stats
     }
     this.getAgentStatusSnapshotFn = deps?.getAgentStatusSnapshot ?? null
+    this.subscribeAgentPromptStatus = deps?.subscribeAgentPromptStatus ?? null
     this.getAgentProviderSessionSnapshotFn =
       deps?.getAgentProviderSessionSnapshot ?? deps?.getAgentStatusSnapshot ?? null
     this.getAgentProviderSessionRowsForPaneFn = deps?.getAgentProviderSessionRowsForPane ?? null
@@ -18644,6 +18655,7 @@ export class OrcaRuntimeService {
       await assertTerminalInputWithinLimitWithYield(payload)
       const generation = this.getPtyLifecycleGeneration(pty.pty.ptyId)
       const submits = await this.serializeAgentPromptSubmission(
+        handle,
         pty.pty.ptyId,
         generation,
         async () => {
@@ -18673,11 +18685,22 @@ export class OrcaRuntimeService {
       throw new Error('terminal_not_writable')
     }
     const generation = this.getPtyLifecycleGeneration(leaf.ptyId)
-    const submits = await this.serializeAgentPromptSubmission(leaf.ptyId, generation, async () => {
-      this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId!)
-      this.assertAgentPromptGeneration(leaf.ptyId!, generation)
-      return await this.writeTerminalAgentPrompt(handle, leaf.ptyId!, generation, payload, options)
-    })
+    const submits = await this.serializeAgentPromptSubmission(
+      handle,
+      leaf.ptyId,
+      generation,
+      async () => {
+        this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId!)
+        this.assertAgentPromptGeneration(leaf.ptyId!, generation)
+        return await this.writeTerminalAgentPrompt(
+          handle,
+          leaf.ptyId!,
+          generation,
+          payload,
+          options
+        )
+      }
+    )
     const bytesWritten = Buffer.byteLength(payload, 'utf8') + submits
     return { handle, accepted: true, bytesWritten }
   }
@@ -19439,13 +19462,23 @@ export class OrcaRuntimeService {
   }
 
   private async serializeAgentPromptSubmission<T>(
+    handle: string,
     ptyId: string,
     generation: number,
     submit: () => Promise<T>
   ): Promise<T> {
     const queueKey = `${ptyId}\u0000${generation}`
     const previous = this.agentPromptSubmissionTailByPtyId.get(queueKey) ?? Promise.resolve()
-    const submission = previous.catch(() => undefined).then(submit)
+    const submission = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const unsubscribe = this.observeAgentPromptStatus(handle, ptyId, generation)
+        try {
+          return await submit()
+        } finally {
+          unsubscribe?.()
+        }
+      })
     const tail = submission.then(
       () => undefined,
       () => undefined
@@ -19458,6 +19491,61 @@ export class OrcaRuntimeService {
         this.agentPromptSubmissionTailByPtyId.delete(queueKey)
       }
     }
+  }
+
+  private observeAgentPromptStatus(
+    handle: string,
+    ptyId: string,
+    generation: number
+  ): (() => void) | undefined {
+    if (!this.subscribeAgentPromptStatus) {
+      return undefined
+    }
+    this.assertAgentPromptGeneration(ptyId, generation)
+    this.assertLiveTerminalHandleTargetsPty(handle, ptyId)
+    const pty = this.ptysById.get(ptyId)
+    const paneKey = this.getPaneKeyForTerminalHandle(handle)
+    if (!pty?.launchToken || !paneKey) {
+      return undefined
+    }
+    const { launchToken, incarnationId, connectionId, worktreeId, launchAgent } = pty
+    // A pre-existing working hook is the baseline, never evidence of this submission.
+    this.recordAgentPromptLifecycleState(ptyId, this.getAgentPromptActivity(handle, ptyId).status)
+    return this.subscribeAgentPromptStatus((event) => {
+      if (
+        event.isReplay ||
+        event.restoredUnconfirmed ||
+        event.providerSessionOnly ||
+        event.paneKey !== paneKey ||
+        event.launchToken !== launchToken ||
+        event.connectionId !== connectionId ||
+        (event.worktreeId !== undefined && event.worktreeId !== worktreeId) ||
+        (launchAgent !== null && event.payload.agentType !== launchAgent) ||
+        this.ptysById.get(ptyId) !== pty ||
+        pty.launchToken !== launchToken ||
+        pty.incarnationId !== incarnationId ||
+        this.getPtyLifecycleGeneration(ptyId) !== generation
+      ) {
+        return
+      }
+      try {
+        this.assertLiveTerminalHandleTargetsPty(handle, ptyId)
+      } catch {
+        return
+      }
+      const status = mapExplicitAgentStateToRuntimeTerminalStatus(event.payload.state)
+      // Late tool progress belongs to an older turn unless the ingress proves a new input boundary.
+      if (
+        status === 'working' &&
+        (event.observation?.origin !== 'hook' ||
+          event.observation.kind !== 'transition' ||
+          event.observation.boundary !== true ||
+          event.hasExplicitPrompt !== true)
+      ) {
+        return
+      }
+      this.recordAgentPromptLifecycleState(ptyId, status)
+    })
   }
 
   private getAgentPromptActivity(handle: string, ptyId: string): AgentPromptActivity {
