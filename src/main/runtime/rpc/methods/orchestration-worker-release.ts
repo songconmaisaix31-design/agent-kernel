@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import type { WorkerTerminalListState } from '../../orchestration/worker-terminal-ownership'
+import type {
+  WorkerTerminalListState,
+  WorkerTerminalResourceRow
+} from '../../orchestration/worker-terminal-ownership'
+import type { OrcaRuntimeService } from '../../orca-runtime'
 import { defineMethod, type RpcMethod } from '../core'
 import { requiredString } from '../schemas'
 import {
@@ -24,6 +28,49 @@ const WorkerListParams = z.object({
   run: z.string().min(1).optional(),
   terminalState: z.enum(WORKER_TERMINAL_LIST_STATES).optional()
 })
+
+async function reconcileExitedRelease(
+  runtime: OrcaRuntimeService,
+  dispatchId: string,
+  resource: WorkerTerminalResourceRow | null,
+  receipt: WorkerReleaseReceipt
+): Promise<WorkerReleaseReceipt> {
+  const processIncarnation = resource?.process_incarnation
+  if (
+    receipt.state !== 'retained' ||
+    !processIncarnation ||
+    (await runtime.inspectTerminalProcessIncarnationLiveness(
+      processIncarnation,
+      resource.host_scope
+    )) !== 'exited'
+  ) {
+    return receipt
+  }
+  const db = runtime.getOrchestrationDb()
+  const current = db.getWorkerTerminalResource(resource.id)
+  // Exit evidence cannot transfer to an owner or host changed during observation.
+  if (
+    current?.owner_dispatch_id !== resource.owner_dispatch_id ||
+    current.host_scope !== resource.host_scope
+  ) {
+    return receipt
+  }
+  const reconciled = db.settleDeadWorkerTerminalRelease({
+    requestingDispatchId: dispatchId,
+    resourceId: resource.id,
+    processIncarnation
+  })
+  if (reconciled.disposition !== 'released') {
+    return receipt
+  }
+  runtime.notifyMessageArrived(`dispatch:${dispatchId}`, 'status')
+  return {
+    dispatchId,
+    state: 'released',
+    processAction: 'none',
+    archive: archiveSummary(reconciled.resource)
+  }
+}
 
 export const ORCHESTRATION_WORKER_RELEASE_METHODS: RpcMethod[] = [
   defineMethod({
@@ -53,44 +100,21 @@ export const ORCHESTRATION_WORKER_RELEASE_METHODS: RpcMethod[] = [
         }
       }
       if (requested.disposition === 'retained') {
-        const resource = requested.resource
-        const processIncarnation = resource?.process_incarnation
-        if (
-          processIncarnation &&
-          (await runtime.inspectTerminalProcessIncarnationLiveness(
-            processIncarnation,
-            resource.host_scope
-          )) === 'exited'
-        ) {
-          const reconciled = db.settleDeadWorkerTerminalRelease({
-            requestingDispatchId: params.dispatch,
-            resourceId: resource.id,
-            processIncarnation
-          })
-          if (reconciled.disposition === 'released') {
-            runtime.notifyMessageArrived(`dispatch:${params.dispatch}`, 'status')
-            return {
-              dispatchId: params.dispatch,
-              state: 'released',
-              processAction: 'none',
-              archive: archiveSummary(reconciled.resource)
-            }
-          }
-        }
-        return {
+        return reconcileExitedRelease(runtime, params.dispatch, requested.resource, {
           dispatchId: params.dispatch,
           state: 'retained',
           reason: requested.reason,
           processAction: 'none',
-          archive: archiveSummary(resource)
-        }
+          archive: archiveSummary(requested.resource)
+        })
       }
-      return completeWorkerTerminalRelease({
+      const completed = await completeWorkerTerminalRelease({
         runtime,
         db,
         dispatchId: params.dispatch,
         resource: requested.resource
       })
+      return reconcileExitedRelease(runtime, params.dispatch, requested.resource, completed)
     }
   }),
   defineMethod({
