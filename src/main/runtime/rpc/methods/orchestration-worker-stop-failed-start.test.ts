@@ -14,8 +14,7 @@ describe('failed startup worker stop', () => {
   const hostScope = { kind: 'local', hostId: 'local' }
   const closeTerminal = vi.fn()
 
-  beforeEach(() => {
-    db = new OrchestrationDb(':memory:')
+  function createWorker(failedStart: boolean) {
     taskId = db.createTask({ spec: 'failed startup timer' }).id
     dispatchId = db.createStartingWorkerDispatch({ taskId, startOptions: {} }).dispatch.id
     db.prepareStartingWorkerAuthority({
@@ -29,7 +28,16 @@ describe('failed startup worker stop', () => {
       terminalOwnership: 'created',
       hostScope: JSON.stringify(hostScope)
     })
-    db.failWorkerStart(dispatchId, 'dispatch_input', 'agent_prompt_stalled')
+    if (failedStart) {
+      db.failWorkerStart(dispatchId, 'dispatch_input', 'agent_prompt_stalled')
+    } else {
+      db.markWorkerDispatchReady(dispatchId)
+    }
+  }
+
+  beforeEach(() => {
+    db = new OrchestrationDb(':memory:')
+    createWorker(true)
     closeTerminal.mockReset().mockResolvedValue({ handle: 'term_worker', ptyKilled: true })
     runtime = {
       getOrchestrationDb: () => db,
@@ -56,6 +64,70 @@ describe('failed startup worker stop', () => {
     const method = ORCHESTRATION_WORKER_STOP_METHODS[0]!
     return method.handler(method.params!.parse({ dispatch: dispatchId }), { runtime })
   }
+
+  it.each([
+    { failedStart: false, confirmed: true },
+    { failedStart: false, confirmed: false },
+    { failedStart: true, confirmed: true },
+    { failedStart: true, confirmed: false }
+  ])(
+    'settles an in-flight close after process exit: failedStart=$failedStart confirmed=$confirmed',
+    async ({ failedStart, confirmed }) => {
+      if (!failedStart) {
+        db.close()
+        db = new OrchestrationDb(':memory:')
+        createWorker(false)
+      }
+      const dispatchBefore = db.getDispatchContextById(dispatchId)!
+      let finish!: (value: unknown) => void
+      closeTerminal.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+      const pending = stop()
+      await vi.waitFor(() => expect(closeTerminal).toHaveBeenCalledTimes(1))
+      const revokedAt = db.getDispatchContextById(dispatchId)?.capability_revoked_at
+      expect(revokedAt).toBeTruthy()
+      await expect(stop()).resolves.toMatchObject({ state: 'stopping', processAction: 'none' })
+      const exitCallback = () =>
+        db.failDispatch(dispatchId, 'Worker process exited', {
+          workerProcessExited: true,
+          terminationReason: 'operator_close'
+        })
+      exitCallback()
+      exitCallback()
+      finish({
+        handle: 'term_worker',
+        ptyKilled: confirmed,
+        ptyStopVerdict: confirmed ? 'exited' : 'unverifiable'
+      })
+      const state = confirmed ? 'stopped' : 'stop_unknown'
+      await expect(pending).resolves.toMatchObject({
+        state,
+        processAction: 'closed_agent_terminal'
+      })
+      expect(db.getDispatchContextById(dispatchId)).toMatchObject({
+        status: failedStart || confirmed ? 'failed' : 'dispatched',
+        last_failure: failedStart || !confirmed ? dispatchBefore.last_failure : 'stopped',
+        failure_count: dispatchBefore.failure_count,
+        capability_revoked_at: revokedAt
+      })
+      if (failedStart) {
+        expect(db.getDispatchContextById(dispatchId)).toEqual(dispatchBefore)
+        expect(db.getWorkerDispatch(dispatchId)?.stage).toBe('dispatch_input')
+      }
+      const settledWorker = db.getWorkerDispatch(dispatchId)
+      const settledDispatch = db.getDispatchContextById(dispatchId)
+      const settledTask = db.getTask(taskId)
+      exitCallback()
+      await expect(stop()).resolves.toMatchObject({
+        state,
+        alreadySettled: confirmed,
+        processAction: 'none'
+      })
+      expect(db.getWorkerDispatch(dispatchId)).toEqual(settledWorker)
+      expect(db.getDispatchContextById(dispatchId)).toEqual(settledDispatch)
+      expect(db.getTask(taskId)).toEqual(settledTask)
+      expect(closeTerminal).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('actively stops an exact owned live failed-start resource and preserves failure history', async () => {
     const dispatchBefore = db.getDispatchContextById(dispatchId)

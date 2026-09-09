@@ -144,6 +144,68 @@ describe('Task/Dispatch lifecycle guards', () => {
     expectCapability(database, worker, false)
   })
 
+  it.each(['stopping', 'stop_unknown'] as const)(
+    'preserves %s settlement ownership when an exit callback arrives beside a newer owner',
+    (state) => {
+      const database = createDatabase()
+      const task = database.createTask({ spec: 'stop exit callback race' })
+      const worker = startWorker(database, task.id, 'stopping_old')
+      database.beginWorkerStop(worker.dispatchId, 'runtime_test')
+      if (state === 'stop_unknown') {
+        database.markWorkerStopUnknown(worker.dispatchId, 'native close unconfirmed')
+      }
+      sqliteFor(database).prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(task.id)
+      const successor = startWorker(database, task.id, 'new_owner')
+      const dispatchBefore = database.getDispatchContextById(worker.dispatchId)
+      const workerBefore = database.getWorkerDispatch(worker.dispatchId)
+      const successorBefore = database.getDispatchContextById(successor.dispatchId)
+      const taskBefore = database.getTask(task.id)
+      for (let duplicate = 0; duplicate < 2; duplicate++) {
+        database.failDispatch(worker.dispatchId, 'Worker process exited', {
+          workerProcessExited: true,
+          terminationReason: 'operator_close'
+        })
+      }
+      expect(database.getWorkerDispatch(worker.dispatchId)).toEqual(workerBefore)
+      expect(database.getDispatchContextById(worker.dispatchId)).toEqual(dispatchBefore)
+      expect(database.getDispatchContextById(successor.dispatchId)).toEqual(successorBefore)
+      expect(database.getWorkerDispatch(successor.dispatchId)?.state).toBe('ready')
+      expect(database.getTask(task.id)).toEqual(taskBefore)
+      expectCapability(database, worker, false)
+      expectCapability(database, successor, true)
+    }
+  )
+
+  it.each(['completed', 'abandoned'] as const)(
+    'preserves a %s result after a late process-exit callback',
+    (outcome) => {
+      const database = createDatabase()
+      const task = database.createTask({ spec: 'late exit after settlement' })
+      const worker = startWorker(database, task.id, outcome)
+      if (outcome === 'completed') {
+        database.settleWorkerReport({
+          taskId: task.id,
+          dispatchId: worker.dispatchId,
+          outcome: 'succeeded',
+          result: 'completed before exit'
+        })
+      } else {
+        database.abandonWorkerDispatch(worker.dispatchId)
+      }
+      const taskBefore = database.getTask(task.id)
+      const workerBefore = database.getWorkerDispatch(worker.dispatchId)
+      const dispatchBefore = database.getDispatchContextById(worker.dispatchId)
+      database.failDispatch(worker.dispatchId, 'late process exit', {
+        workerProcessExited: true,
+        terminationReason: 'operator_close'
+      })
+      expect(database.getTask(task.id)).toEqual(taskBefore)
+      expect(database.getWorkerDispatch(worker.dispatchId)).toEqual(workerBefore)
+      expect(database.getDispatchContextById(worker.dispatchId)).toEqual(dispatchBefore)
+      expectCapability(database, worker, false)
+    }
+  )
+
   it('keeps a Task dispatched when missing-terminal recovery leaves another worker active', () => {
     const database = createDatabase()
     const task = database.createTask({ spec: 'legacy missing-terminal split' })
