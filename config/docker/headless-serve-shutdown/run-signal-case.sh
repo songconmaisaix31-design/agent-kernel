@@ -124,8 +124,22 @@ if [[ -z "$xvfb_pids" ]]; then
   exit 1
 fi
 
+find_serving_electron_pid() {
+  local pid cmdline
+  for pid in "$app_pid" "${tree_pids[@]}"; do
+    [[ -r "/proc/$pid/cmdline" ]] || continue
+    cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline")
+    if [[ "$cmdline" == *"/orca-ide"* ]] \
+      && [[ " $cmdline " == *" --serve "* || " $cmdline " == *" serve "* ]]; then
+      echo "$pid"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ "$require_sandbox" == 1 ]]; then
-  electron_pid=$(awk '/\/orca-ide .* --serve / {print $1; exit}' <<<"$tree_snapshot")
+  electron_pid=$(find_serving_electron_pid || true)
   [[ -n "$electron_pid" ]] || { echo "FAIL: ORCA_REQUIRE_SANDBOX found no serving Electron process" >&2; exit 1; }
   electron_cmdline=$(tr '\0' ' ' <"/proc/$electron_pid/cmdline")
   electron_environment=$(tr '\0' '\n' <"/proc/$electron_pid/environ" 2>/dev/null || true)
@@ -141,7 +155,7 @@ fi
 
 signal_target_pid=$app_pid
 if [[ "$signal_target_kind" == serving-electron ]]; then
-  signal_target_pid=$(awk '/\/orca-ide .* --serve / {print $1; exit}' <<<"$tree_snapshot")
+  signal_target_pid=$(find_serving_electron_pid || true)
   [[ -n "$signal_target_pid" ]] || { echo "FAIL: serving Electron process not found" >&2; exit 1; }
 elif [[ "$signal_target_kind" != app ]]; then
   echo "unsupported signal target: $signal_target_kind" >&2

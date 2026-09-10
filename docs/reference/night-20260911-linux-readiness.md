@@ -80,9 +80,11 @@ write paths are exactly:
 - `config/scripts/run-headless-serve-shutdown-docker.mjs`
 
 The remediation now exposes an opt-in `--require-sandbox` mode on both Docker
-runners. It selects the extracted `orca-ide` binary, rejects sandbox-disable
-flags and environment variables, verifies the final Electron argv, and fails
-closed on a namespace denial; existing functional mode remains separate.
+runners. It selects the extracted `orca-ide` binary, binds argv inspection to
+the launch process tree, rejects sandbox-disable flags and environment
+variables, and fails closed on a namespace denial; existing functional mode
+remains separate. Its pairing runner performs a startup-only secure check and
+reports that scope explicitly instead of claiming the full pairing suite.
 
 ## Validation required after staging
 

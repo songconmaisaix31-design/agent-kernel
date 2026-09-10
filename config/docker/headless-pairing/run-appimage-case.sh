@@ -80,15 +80,38 @@ if [[ $is_appimage == 0 && "$require_sandbox" != 1 ]]; then
   export APPDIR=${ORCA_TEST_APPDIR:-"$(dirname "$appimage")"}
 fi
 
+process_is_current() {
+  local pid=$1 expected_start_ticks=$2
+  [[ -r "/proc/$pid/stat" ]] || return 1
+  [[ $(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true) == "$expected_start_ticks" ]] \
+    && ! ps -o stat= -p "$pid" 2>/dev/null | grep -q '^Z'
+}
+
+collect_process_tree() {
+  local parent child
+  sandbox_tree_pids=("$app_pid")
+  for ((index = 0; index < ${#sandbox_tree_pids[@]}; index += 1)); do
+    parent=${sandbox_tree_pids[$index]}
+    while read -r child; do
+      [[ -n "$child" ]] && sandbox_tree_pids+=("$child")
+    done < <(ps -o pid= --ppid "$parent" | tr -d ' ')
+  done
+}
+
 verify_sandbox_process() {
   local deadline=$((SECONDS + timeout_seconds))
   local pid cmdline environment
   while ((SECONDS < deadline)); do
-    while read -r pid; do
+    if ! process_is_current "$app_pid" "$app_start_ticks"; then
+      echo "SANDBOX_EXIT app_pid=$app_pid before verification" >&2
+      return 1
+    fi
+    collect_process_tree
+    for pid in "${sandbox_tree_pids[@]}"; do
       [[ -r "/proc/$pid/cmdline" ]] || continue
       cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline")
       [[ "$cmdline" == *"/orca-ide"* ]] || continue
-      [[ "$cmdline" == *"--serve"* ]] || continue
+      [[ " $cmdline " == *" --serve "* || " $cmdline " == *" serve "* ]] || continue
       if [[ "$cmdline" == *"--no-sandbox"* ]]; then
         echo "FAIL: ORCA_REQUIRE_SANDBOX observed --no-sandbox in Electron argv: $cmdline" >&2
         return 1
@@ -100,20 +123,30 @@ verify_sandbox_process() {
       fi
       echo "SANDBOX_OK electron_pid=$pid"
       return 0
-    done < <(pgrep -f '/orca-ide' || true)
+    done
     sleep 0.1
   done
-  echo "FAIL: ORCA_REQUIRE_SANDBOX did not observe a running Electron binary" >&2
+  echo "FAIL: ORCA_REQUIRE_SANDBOX did not observe a current serving Electron child" >&2
   return 1
+}
+
+wait_for_sandbox_process() {
+  set +e
+  wait "$app_pid"
+  app_status=$?
+  set -e
+  echo "SANDBOX_EXIT app_pid=$app_pid status=$app_status" >&2
+  return "$app_status"
 }
 
 if [[ ${ORCA_KEEP_RUNNING:-0} == 1 ]]; then
   if [[ "$require_sandbox" == 1 ]]; then
     env -u ELECTRON_DISABLE_SANDBOX -u ORCA_APPIMAGE_NO_SANDBOX "${command[@]}" &
     app_pid=$!
+    app_start_ticks=$(awk '{print $22}' "/proc/$app_pid/stat")
     trap 'kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
     verify_sandbox_process || exit 1
-    wait "$app_pid"
+    wait_for_sandbox_process
     exit $?
   fi
   exec "${command[@]}"
@@ -122,11 +155,19 @@ fi
 if [[ "$require_sandbox" == 1 ]]; then
   env -u ELECTRON_DISABLE_SANDBOX -u ORCA_APPIMAGE_NO_SANDBOX "${command[@]}" &
   app_pid=$!
+  app_start_ticks=$(awk '{print $22}' "/proc/$app_pid/stat")
   trap 'kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
   verify_sandbox_process || exit 1
-  sleep "$timeout_seconds"
+  deadline=$((SECONDS + timeout_seconds))
+  while ((SECONDS < deadline)) && process_is_current "$app_pid" "$app_start_ticks"; do
+    sleep 0.1
+  done
+  if ! process_is_current "$app_pid" "$app_start_ticks"; then
+    wait_for_sandbox_process
+    exit $?
+  fi
   kill -TERM "$app_pid" 2>/dev/null || true
-  wait "$app_pid" 2>/dev/null || true
+  wait_for_sandbox_process || true
   exit 124
 fi
 

@@ -59,7 +59,11 @@ try {
     await validateAuthenticatedPairing()
     await validateUnreachableOffer()
   }
-  console.log('Headless Linux pairing Docker validation passed.')
+  console.log(
+    requireSandbox
+      ? 'Headless Linux sandbox-required startup validation passed.'
+      : 'Headless Linux pairing Docker validation passed.'
+  )
 } finally {
   for (const container of containers) {
     docker(['rm', '-f', container], { allowFailure: true })
@@ -300,17 +304,17 @@ async function waitForReady(name, startupTimeoutMs, requireSandbox = false) {
   while (Date.now() < deadline) {
     const logResult = docker(['logs', name], { allowFailure: true })
     const stdout = `${logResult.stdout}${logResult.stderr}`
-    if (hasCompleteReadyContract(stdout, requireSandbox)) {
-      return stdout
-    }
     const running = docker(['inspect', '-f', '{{.State.Running}}', name], {
       allowFailure: true
     }).stdout.trim()
     if (running === 'false') {
       const containerLogs = docker(['logs', name], { allowFailure: true })
       throw new Error(
-        `${name} exited before readiness:\n${containerLogs.stdout}${containerLogs.stderr}`
+        `${name} exited before required readiness:\n${containerLogs.stdout}${containerLogs.stderr}`
       )
+    }
+    if (hasCompleteReadyContract(stdout, requireSandbox)) {
+      return stdout
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   }
