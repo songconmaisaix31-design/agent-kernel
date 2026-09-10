@@ -9,7 +9,14 @@ RUN apt-get update \
     build-essential \
     fakeroot \
     git \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnss3 \
     libsecret-1-dev \
+    libxkbcommon0 \
     pkg-config \
     python3 \
     rpm \
