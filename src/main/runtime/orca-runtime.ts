@@ -40309,6 +40309,7 @@ function findActionableTerminalWaitBlockedSignal(
 function findDismissedStartupModalIndex(normalized: string): number | null {
   const indexes = [
     findCodexReadyPromptIndex(normalized),
+    findCodexInputPromptIndex(normalized),
     findAntigravityReadyPromptIndex(normalized),
     findCursorActivePromptIndex(normalized)
   ].filter((index): index is number => index !== null)
@@ -40352,6 +40353,10 @@ function findCodexReadyPromptIndex(normalized: string): number | null {
   const readySegment = normalized.slice(headerIndex)
   // Why: Codex prints permissions only in YOLO mode; the stable ready header is OpenAI Codex + model + directory.
   return readySegment.includes('model:') && readySegment.includes('directory:') ? headerIndex : null
+}
+
+function findCodexInputPromptIndex(normalized: string): number | null {
+  return normalized.lastIndexOf('ask codex to do anything')
 }
 
 function findAntigravityReadyPromptIndex(normalized: string): number | null {
