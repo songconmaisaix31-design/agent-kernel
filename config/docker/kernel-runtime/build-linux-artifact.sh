@@ -33,6 +33,13 @@ test -f "$source_dir/LICENSE"
 test -d "$source_dir/resources"
 
 cd "$source_dir"
+# Reject incompatible toolchains before installing or compiling native modules.
+compiler_version=$(g++ -dumpfullversion)
+if ! dpkg --compare-versions "$compiler_version" ge 12.2; then
+  echo "Node 24 native build requires GCC >= 12.2; found $compiler_version" >&2
+  exit 69
+fi
+printf 'compiler=%s\n' "$compiler_version"
 pnpm install --frozen-lockfile --force
 pnpm run build:linux
 
