@@ -1,6 +1,6 @@
-FROM node:24-bookworm AS node-toolchain
+FROM node:24-bookworm@sha256:6dac556d980b7f0e5498d08f08cee0ca67798b4ad6c23964a9214920e67758d0 AS node-toolchain
 
-FROM ubuntu:20.04
+FROM ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -18,7 +18,7 @@ RUN apt-get update \
 
 COPY --from=node-toolchain /usr/local /usr/local
 
-RUN corepack enable \
+RUN corepack enable pnpm \
   && corepack prepare pnpm@10.24.0 --activate
 
 WORKDIR /workspace

@@ -19,6 +19,10 @@ staging_dir=/artifacts
 test -r "$source_archive"
 test -d /workspace/source/node_modules
 test -d "$staging_dir"
+if find "$staging_dir" -mindepth 1 -print -quit | grep -q .; then
+  echo "Artifact target must be new and empty: $staging_dir" >&2
+  exit 73
+fi
 
 find "$source_dir" -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf -- '{}' +
 tar -xf "$source_archive" -C "$source_dir"
@@ -46,7 +50,6 @@ if ! compgen -G "$artifact_dir/*.deb" >/dev/null; then
   exit 1
 fi
 
-rm -rf "$staging_dir"/*
 install -d -m 755 "$staging_dir/packages"
 cp -- "$artifact_dir"/* "$staging_dir/packages/"
 install -m 644 LICENSE "$staging_dir/LICENSE"

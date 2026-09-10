@@ -22,7 +22,8 @@ ARTIFACT_DIR="$PWD/kernel-linux-artifacts-${SOURCE_SHA}"
 
 git cat-file -e "${SOURCE_SHA}^{commit}"
 git archive --format=tar "$SOURCE_SHA" > /tmp/orca-source-${SOURCE_SHA}.tar
-mkdir -p "$ARTIFACT_DIR"
+test ! -e "$ARTIFACT_DIR"
+mkdir "$ARTIFACT_DIR"
 docker volume create "$MODULE_VOLUME"
 docker build --tag "$BUILD_IMAGE" --file config/docker/kernel-runtime/Dockerfile .
 docker run --rm \
@@ -40,6 +41,12 @@ remain authoritative. The Ubuntu 20.04 builder supplies the supported glibc
 floor while the copied official Node 24 toolchain retains its upstream glibc 2.28
 baseline; existing electron-builder hooks still reject an invalid packaged native
 binary.
+
+Both builder base images are digest-pinned. `corepack enable pnpm` deliberately
+enables only pnpm: the copied Node toolchain has a dangling Yarn link and broad
+Corepack enablement fails before the package manager is available. The artifact
+mount must be a new empty directory; the script rejects a non-empty target and
+never clears an existing result.
 
 The resulting `kernel-linux-artifacts-<SHA>/` contains:
 
