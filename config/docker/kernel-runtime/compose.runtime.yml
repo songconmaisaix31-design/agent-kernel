@@ -1,0 +1,32 @@
+services:
+  orca:
+    build:
+      context: ${ORCA_RUNTIME_CONTEXT:?set ORCA_RUNTIME_CONTEXT to the isolated runtime context}
+      dockerfile: Dockerfile.runtime
+      args:
+        ORCA_APPIMAGE_SHA256: ${ORCA_APPIMAGE_SHA256:?set the final AppImage SHA-256}
+    environment:
+      ORCA_PAIRING_ADDRESS: ${ORCA_PAIRING_ADDRESS:-127.0.0.1}
+      ORCA_RUNTIME_SECONDS: ${ORCA_RUNTIME_SECONDS:?set W0's remaining seconds}
+      ORCA_SERVE_PORT: "6768"
+    init: true
+    ports:
+      - "127.0.0.1:${ORCA_CONTROL_PORT:-6768}:6768"
+    restart: "no"
+    volumes:
+      - runtime-home:/home/orca
+      - runtime-code:/workspace
+      - runtime-output:/output
+      - type: bind
+        source: ${ORCA_TASKS_DIR:?set a tasks directory}
+        target: /input/tasks
+        read_only: true
+      - type: bind
+        source: ${ORCA_ASSETS_DIR:?set an assets directory}
+        target: /input/assets
+        read_only: true
+
+volumes:
+  runtime-home:
+  runtime-code:
+  runtime-output:

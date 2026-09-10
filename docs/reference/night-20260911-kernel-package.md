@@ -21,7 +21,7 @@ MODULE_VOLUME=orca-kernel-linux-node-modules-${SOURCE_SHA}
 ARTIFACT_DIR="$PWD/kernel-linux-artifacts-${SOURCE_SHA}"
 
 git cat-file -e "${SOURCE_SHA}^{commit}"
-git archive --format=tar "$SOURCE_SHA" > /tmp/orca-source-${SOURCE_SHA}.tar
+git -c core.autocrlf=false archive --format=tar --output=/tmp/orca-source-${SOURCE_SHA}.tar "$SOURCE_SHA"
 test ! -e "$ARTIFACT_DIR"
 mkdir "$ARTIFACT_DIR"
 docker volume create "$MODULE_VOLUME"
@@ -35,7 +35,8 @@ docker run --rm \
 ```
 
 `git archive` is the product build input, not a substitute for the checkout
-used to build the builder image. The script runs `pnpm install --frozen-lockfile --force`
+used to build the builder image. `core.autocrlf=false` keeps the Git blob's LF
+bytes when a Windows host creates the archive. The script runs `pnpm install --frozen-lockfile --force`
 before `pnpm run build:linux`, so the package lock and Linux native rebuild path
 remain authoritative. The Ubuntu 20.04 builder supplies the supported glibc
 floor while the copied official Node 24 toolchain retains its upstream glibc 2.28
@@ -74,3 +75,49 @@ The resulting `kernel-linux-artifacts-<SHA>/` contains:
 Do not run `AppRun`, add `--no-sandbox`, publish ports, or treat artifact creation
 as a readiness check. W0 must separately decide whether the Docker namespace and
 sandbox policy permits a direct, unwrapped, unprivileged startup.
+
+## Runtime review recipe
+
+This is a Fork runtime image, assembled only from the final locally produced
+`orca-linux.AppImage`; it does not reuse or identify as an upstream image. The
+build extracts the AppImage without launching it, checks the supplied checksum,
+and the runtime invokes `/opt/orca/squashfs-root/orca-ide serve` directly. That
+layout carries the packaged CLI resources and unpacked daemon entry produced by
+the existing Linux electron-builder configuration.
+
+Create an isolated build context containing no repository, credentials, sockets,
+or reference-only material. W0 supplies the actual output path and checksum.
+
+```bash
+set -euo pipefail
+RUNTIME_CONTEXT=$(mktemp -d)
+cp /path/to/final/orca-linux.AppImage "$RUNTIME_CONTEXT/orca-linux.AppImage"
+cp config/docker/kernel-runtime/Dockerfile.runtime "$RUNTIME_CONTEXT/Dockerfile.runtime"
+cp config/docker/kernel-runtime/run-orca-runtime.sh "$RUNTIME_CONTEXT/run-orca-runtime.sh"
+export ORCA_RUNTIME_CONTEXT="$RUNTIME_CONTEXT"
+export ORCA_APPIMAGE_SHA256=$(sha256sum "$RUNTIME_CONTEXT/orca-linux.AppImage" | awk '{print $1}')
+export ORCA_RUNTIME_SECONDS=120
+export ORCA_TASKS_DIR=/absolute/path/to/tasks
+export ORCA_ASSETS_DIR=/absolute/path/to/assets
+docker compose -p orca-night-20260911-005945 \
+  -f config/docker/kernel-runtime/compose.runtime.yml config
+```
+
+The `config` command is a review-only render. W0 alone builds or starts it, with
+the fixed remaining-seconds value; `restart: "no"` prevents a replacement run.
+The only published port is loopback control traffic. HOME, code, and output are
+separate named volumes; tasks and assets are read-only mounts, and neither a
+Docker socket nor a host checkout is mounted into the product worker.
+
+For the authorized user to log into the pinned official Codex CLI interactively,
+without embedding a credential or claiming login success:
+
+```bash
+docker compose -p orca-night-20260911-005945 \
+  -f config/docker/kernel-runtime/compose.runtime.yml run --rm --entrypoint codex orca login
+```
+
+This recipe does not apply a seccomp, namespace, capability, privileged, or
+`--no-sandbox` exception. Default Docker sandbox behavior can therefore still
+reject Electron startup; a built image, a rendered Compose config, or a manual
+login is not runtime acceptance or evidence that a product worker ran.
