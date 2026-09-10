@@ -177,3 +177,25 @@ It did not run because dependencies are absent (`vitest` is not recognized); no
 passing test or Docker/product claim is made. Once W0 has prepared a separate
 eligible product checkout, rerun that command there and then run the four
 server-mediated acceptance invocations above with actual Run/Task/Dispatch IDs.
+
+## Follow-up: required Linux sandbox regression boundary
+
+The independent regression at
+`config/scripts/headless-required-sandbox.test.mjs` uses Node's built-in
+`node:test`/`assert`, a temporary fake Docker executable, and (on Linux) a
+temporary executable `orca-ide` child. It exercises the W1 contract without
+running Docker: `--require-sandbox` must become `ORCA_REQUIRE_SANDBOX=1`, strict
+pairing must select extracted `orca-ide`, ready-like output without
+`SANDBOX_OK` or with namespace `EPERM` must not pass, explicit sandbox disable
+must be rejected, and non-strict existing arguments remain usable.
+
+Run it only after the W1 implementation is present in the same checkout:
+
+```powershell
+node --test config/scripts/headless-required-sandbox.test.mjs
+```
+
+This is a process-fixture regression, not Docker/AppImage/Electron product
+acceptance. A real strict Docker run remains blocked (rather than downgraded)
+when the environment cannot establish Chromium namespaces or otherwise fails
+the sandbox proof.
