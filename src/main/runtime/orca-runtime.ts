@@ -13,6 +13,7 @@ import {
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
 import { TerminalReadinessDiagnostics } from './terminal-readiness-diagnostics'
+import { isDismissedCodexRateLimitReminder } from './terminal-readiness-codex-prompt'
 import { planWorktreeSortOrderUpdates } from '../../shared/worktree/sort-order-update'
 import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
 import {
@@ -40298,6 +40299,9 @@ function findActionableTerminalWaitBlockedSignal(
   if (blockedSignal === null) {
     return null
   }
+  if (isDismissedCodexRateLimitReminder(normalized, blockedSignal.index)) {
+    return null
+  }
   const dismissedModalIndex = findDismissedStartupModalIndex(normalized)
   // Why: a live prompt after the modal means it was dismissed → signal no longer actionable, even mid-run (Cursor never reports idle via OSC title).
   return dismissedModalIndex !== null && dismissedModalIndex > blockedSignal.index
@@ -40309,7 +40313,6 @@ function findActionableTerminalWaitBlockedSignal(
 function findDismissedStartupModalIndex(normalized: string): number | null {
   const indexes = [
     findCodexReadyPromptIndex(normalized),
-    findCodexInputPromptIndex(normalized),
     findAntigravityReadyPromptIndex(normalized),
     findCursorActivePromptIndex(normalized)
   ].filter((index): index is number => index !== null)
@@ -40353,10 +40356,6 @@ function findCodexReadyPromptIndex(normalized: string): number | null {
   const readySegment = normalized.slice(headerIndex)
   // Why: Codex prints permissions only in YOLO mode; the stable ready header is OpenAI Codex + model + directory.
   return readySegment.includes('model:') && readySegment.includes('directory:') ? headerIndex : null
-}
-
-function findCodexInputPromptIndex(normalized: string): number | null {
-  return normalized.lastIndexOf('ask codex to do anything')
 }
 
 function findAntigravityReadyPromptIndex(normalized: string): number | null {

@@ -6,7 +6,7 @@ This repair addresses an answered Codex ordinary rate-limit reminder that remain
 
 ## Decision
 
-`Ask Codex to do anything` is current-screen evidence that the earlier Codex startup-style modal is no longer actionable. It clears only an older matched prompt; a trust, sandbox, permission, or other interactive prompt that follows it remains blocked because the latest actionable signal wins.
+Only the observed ordinary reminder is eligible: `Approaching rate limits`, `Switch to gpt-5.6-luna for lower credit usage?`, and `Press enter to confirm or esc to go back`, followed by an anchored final `Ask Codex to do anything` input line. It clears only that same reminder; a trust, sandbox, permission, or other interactive prompt remains blocked.
 
 ## Compatibility
 
