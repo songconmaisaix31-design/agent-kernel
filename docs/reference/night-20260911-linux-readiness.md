@@ -33,17 +33,20 @@ and package conclusions here apply only to this checkout and commit.
 
 ## Small Docker recipe (W0-owned execution)
 
-Build on a Linux x64 host at or below the supported ABI floor, preferably the
-repository's Ubuntu 22.04 baseline fixture, so a locally rebuilt `node-pty`
-cannot acquire a newer GLIBC requirement. In the `config/docker/headless-pairing/Dockerfile.build`
-environment, install the locked dependencies, run `pnpm run build:linux`, then
-use the resulting `dist/orca-linux.AppImage` in an unprivileged runtime image
+Build on an Ubuntu 20.04 (glibc 2.31) build environment or a verified prebuilt
+native dependency set that passes the packaging gate; Ubuntu 22.04 has glibc
+2.35 and is not itself the ABI floor. The current `Dockerfile.build` uses
+Node 24 Bookworm, so it is useful for staging but must not be treated as a
+glibc-2.31 native build environment. In an isolated Linux volume (never reuse
+Windows `node_modules`), W0 should install the locked dependencies and build
+on Ubuntu 20.04, then run `pnpm run build:linux` and retain the package gate's
+native-symbol result before placing `dist/orca-linux.AppImage` in an unprivileged runtime image
 with a private writable HOME/XDG state directory, no host HOME, repository, or
 Docker socket mount, and no public published control port.
 
 Install the documented runtime libraries, including `xvfb`, `zlib1g-dev`, GTK,
 NSS, GBM, and X11 libraries. In Docker, extract the AppImage once without FUSE
-and launch `squashfs-root/AppRun serve --port 0 --pairing-address <reachable-private-host> --json`.
+and launch the extracted `squashfs-root/orca-ide serve --port 0 --pairing-address <reachable-private-host> --json`.
 Do not pass `--no-sandbox`, `ELECTRON_DISABLE_SANDBOX`, privileged mode, extra
 capabilities, or a sandbox-relaxing seccomp profile. `orca serve` starts Xvfb
 itself when `DISPLAY` is unset and emits the versioned `orca_server_ready`
@@ -76,9 +79,10 @@ write paths are exactly:
 - `config/docker/headless-serve-shutdown/run-signal-case.sh`
 - `config/scripts/run-headless-serve-shutdown-docker.mjs`
 
-The remediation must make sandbox-preserving mode the required default and
-report a distinct blocked environmental result if Chromium namespace setup is
-denied. It must not convert that result into a `--no-sandbox` retry.
+The remediation now exposes an opt-in `--require-sandbox` mode on both Docker
+runners. It selects the extracted `orca-ide` binary, rejects sandbox-disable
+flags and environment variables, verifies the final Electron argv, and fails
+closed on a namespace denial; existing functional mode remains separate.
 
 ## Validation required after staging
 

@@ -8,6 +8,7 @@ const APPIMAGE_EXTRACTION_TIMEOUT_MS = 60_000
 const commandArgs = process.argv.slice(2)
 const appImageArg = valueAfter('--appimage')
 const pairingOnly = commandArgs.includes('--pairing-only')
+const requireSandbox = commandArgs.includes('--require-sandbox')
 if (!appImageArg) {
   fail('Usage: run-headless-linux-pairing-docker.mjs --appimage /path/to/orca.AppImage')
 }
@@ -48,12 +49,16 @@ try {
     buildImage(image)
   }
   extractAppImage(images[0].tag)
-  if (!pairingOnly) {
-    await validateStartupMatrix()
-    await validateUnavailableContracts()
+  if (requireSandbox) {
+    await validateSandboxStartup()
+  } else {
+    if (!pairingOnly) {
+      await validateStartupMatrix()
+      await validateUnavailableContracts()
+    }
+    await validateAuthenticatedPairing()
+    await validateUnreachableOffer()
   }
-  await validateAuthenticatedPairing()
-  await validateUnreachableOffer()
   console.log('Headless Linux pairing Docker validation passed.')
 } finally {
   for (const container of containers) {
@@ -61,6 +66,20 @@ try {
   }
   docker(['network', 'rm', network], { allowFailure: true })
   docker(['volume', 'rm', artifactVolume], { allowFailure: true })
+}
+
+async function validateSandboxStartup() {
+  const result = await startAndWait({
+    image: images[0],
+    launch: 'direct',
+    mode: 'json',
+    address: '127.0.0.1',
+    appPath: '/artifacts/squashfs-root/orca-ide',
+    requireSandbox: true
+  })
+  validateReady(result.stdout, 'json', '127.0.0.1', { allowStdoutNoise: true })
+  stopContainer(result.name)
+  console.log('PASS sandbox-required direct extracted Electron startup')
 }
 
 function valueAfter(flag) {
@@ -236,6 +255,7 @@ async function startAndWait({
   appPath = '/artifacts/squashfs-root/AppRun',
   networkAlias,
   noPairing = false,
+  requireSandbox = false,
   startupTimeoutMs = STARTUP_TIMEOUT_MS
 }) {
   const name = `orca-pairing-${suffix}-${containers.size}`
@@ -262,6 +282,7 @@ async function startAndWait({
     `ORCA_SERVE_PORT=${port}`,
     '-e',
     `ORCA_TEST_APPIMAGE=${appPath}`,
+    ...(requireSandbox ? ['-e', 'ORCA_REQUIRE_SANDBOX=1'] : []),
     ...(noPairing ? ['-e', 'ORCA_NO_PAIRING=1'] : []),
     '-v',
     `${artifactVolume}:/artifacts:ro`,
@@ -270,16 +291,16 @@ async function startAndWait({
   ]
   docker(args)
   containers.add(name)
-  const stdout = await waitForReady(name, startupTimeoutMs)
+  const stdout = await waitForReady(name, startupTimeoutMs, requireSandbox)
   return { name, stdout }
 }
 
-async function waitForReady(name, startupTimeoutMs) {
+async function waitForReady(name, startupTimeoutMs, requireSandbox = false) {
   const deadline = Date.now() + startupTimeoutMs
   while (Date.now() < deadline) {
     const logResult = docker(['logs', name], { allowFailure: true })
     const stdout = `${logResult.stdout}${logResult.stderr}`
-    if (hasCompleteReadyContract(stdout)) {
+    if (hasCompleteReadyContract(stdout, requireSandbox)) {
       return stdout
     }
     const running = docker(['inspect', '-f', '{{.State.Running}}', name], {
@@ -299,14 +320,14 @@ async function waitForReady(name, startupTimeoutMs) {
   )
 }
 
-function hasCompleteReadyContract(stdout) {
+function hasCompleteReadyContract(stdout, requireSandbox = false) {
   if (
     stdout.includes('Orca server ready\n') &&
     (stdout.includes('\nPairing URL: ') || stdout.includes('\nPairing guidance: '))
   ) {
-    return true
+    return !requireSandbox || stdout.includes('SANDBOX_OK electron_pid=')
   }
-  return readyJsonObjects(stdout).length > 0
+  return readyJsonObjects(stdout).length > 0 && (!requireSandbox || stdout.includes('SANDBOX_OK electron_pid='))
 }
 
 function validateReady(logs, mode, expectedHost, options = {}) {

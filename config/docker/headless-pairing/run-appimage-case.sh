@@ -7,6 +7,7 @@ timeout_seconds=${ORCA_STARTUP_TIMEOUT_SECONDS:-12}
 pairing_address=${ORCA_PAIRING_ADDRESS:-127.0.0.1}
 port=${ORCA_SERVE_PORT:-0}
 state_dir="/tmp/orca-${case_name}"
+require_sandbox=${ORCA_REQUIRE_SANDBOX:-0}
 
 if ((EUID == 0)); then
   mkdir -p "$state_dir/config" "$state_dir/cache"
@@ -17,7 +18,23 @@ fi
 
 mkdir -p "$state_dir/config" "$state_dir/cache"
 
-if [[ "$appimage" == *.AppImage ]]; then
+if [[ "$require_sandbox" == 1 && ${ORCA_TEST_NO_SANDBOX:-0} == 1 ]]; then
+  echo "FAIL: ORCA_REQUIRE_SANDBOX rejects ORCA_TEST_NO_SANDBOX=1" >&2
+  exit 64
+fi
+
+if [[ "$require_sandbox" == 1 ]]; then
+  if [[ "$appimage" == *.AppImage ]]; then
+    echo "FAIL: ORCA_REQUIRE_SANDBOX requires an extracted orca-ide binary, not AppRun" >&2
+    exit 64
+  fi
+  if [[ "$(basename "$appimage")" != orca-ide ]] || [[ ! -x "$appimage" ]]; then
+    echo "FAIL: ORCA_REQUIRE_SANDBOX requires executable extracted orca-ide" >&2
+    exit 64
+  fi
+  is_appimage=0
+  launcher=("$appimage")
+elif [[ "$appimage" == *.AppImage ]]; then
   is_appimage=1
   launcher=("$appimage" --appimage-extract-and-run)
 else
@@ -26,7 +43,7 @@ else
 fi
 
 app_args=("${launcher[@]}")
-if [[ ${ORCA_TEST_NO_SANDBOX:-1} == 1 ]]; then
+if [[ "$require_sandbox" != 1 && ${ORCA_TEST_NO_SANDBOX:-1} == 1 ]]; then
   app_args+=(--no-sandbox)
 fi
 app_args+=(serve --port "$port" --pairing-address "$pairing_address")
@@ -59,12 +76,58 @@ esac
 export HOME="$state_dir"
 export XDG_CONFIG_HOME="$state_dir/config"
 export XDG_CACHE_HOME="$state_dir/cache"
-if [[ $is_appimage == 0 ]]; then
+if [[ $is_appimage == 0 && "$require_sandbox" != 1 ]]; then
   export APPDIR=${ORCA_TEST_APPDIR:-"$(dirname "$appimage")"}
 fi
 
+verify_sandbox_process() {
+  local deadline=$((SECONDS + timeout_seconds))
+  local pid cmdline environment
+  while ((SECONDS < deadline)); do
+    while read -r pid; do
+      [[ -r "/proc/$pid/cmdline" ]] || continue
+      cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline")
+      [[ "$cmdline" == *"/orca-ide"* ]] || continue
+      [[ "$cmdline" == *"--serve"* ]] || continue
+      if [[ "$cmdline" == *"--no-sandbox"* ]]; then
+        echo "FAIL: ORCA_REQUIRE_SANDBOX observed --no-sandbox in Electron argv: $cmdline" >&2
+        return 1
+      fi
+      environment=$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null || true)
+      if grep -Eq '^(ELECTRON_DISABLE_SANDBOX|ORCA_APPIMAGE_NO_SANDBOX)=1$' <<<"$environment"; then
+        echo "FAIL: ORCA_REQUIRE_SANDBOX observed sandbox-disable environment on pid $pid" >&2
+        return 1
+      fi
+      echo "SANDBOX_OK electron_pid=$pid"
+      return 0
+    done < <(pgrep -f '/orca-ide' || true)
+    sleep 0.1
+  done
+  echo "FAIL: ORCA_REQUIRE_SANDBOX did not observe a running Electron binary" >&2
+  return 1
+}
+
 if [[ ${ORCA_KEEP_RUNNING:-0} == 1 ]]; then
+  if [[ "$require_sandbox" == 1 ]]; then
+    env -u ELECTRON_DISABLE_SANDBOX -u ORCA_APPIMAGE_NO_SANDBOX "${command[@]}" &
+    app_pid=$!
+    trap 'kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
+    verify_sandbox_process || exit 1
+    wait "$app_pid"
+    exit $?
+  fi
   exec "${command[@]}"
+fi
+
+if [[ "$require_sandbox" == 1 ]]; then
+  env -u ELECTRON_DISABLE_SANDBOX -u ORCA_APPIMAGE_NO_SANDBOX "${command[@]}" &
+  app_pid=$!
+  trap 'kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true' EXIT
+  verify_sandbox_process || exit 1
+  sleep "$timeout_seconds"
+  kill -TERM "$app_pid" 2>/dev/null || true
+  wait "$app_pid" 2>/dev/null || true
+  exit 124
 fi
 
 set +e

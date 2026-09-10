@@ -11,6 +11,7 @@ const signalTarget = valueAfter('--signal-target') ?? 'app'
 const entrypoint = valueAfter('--entrypoint') ?? 'app'
 const intDelivery = valueAfter('--int-delivery') ?? 'foreground-process-group'
 const launcherExecOverlay = args.includes('--launcher-exec-overlay')
+const requireSandbox = args.includes('--require-sandbox')
 if (!appImageArg) {
   fail('Usage: run-headless-serve-shutdown-docker.mjs --appimage /path/to/orca.AppImage')
 }
@@ -28,6 +29,9 @@ if (intDelivery === 'foreground-process-group' && signalTarget !== 'app') {
 }
 if (launcherExecOverlay && entrypoint !== 'launcher') {
   fail('--launcher-exec-overlay requires --entrypoint launcher')
+}
+if (requireSandbox && (entrypoint !== 'app' || launcherExecOverlay)) {
+  fail('--require-sandbox requires --entrypoint app without --launcher-exec-overlay')
 }
 
 const appImage = resolve(appImageArg)
@@ -85,7 +89,8 @@ try {
       signalTarget,
       entrypoint,
       intDelivery,
-      launcherExecOverlay
+      launcherExecOverlay,
+      requireSandbox
     })
   )
   const failedSignals = []
@@ -107,6 +112,7 @@ try {
         `ORCA_TEST_ENTRYPOINT=${entrypoint}`,
         '-e',
         `ORCA_INT_DELIVERY=${intDelivery}`,
+        ...(requireSandbox ? ['-e', 'ORCA_REQUIRE_SANDBOX=1'] : []),
         '-v',
         `${artifactVolume}:/artifacts:ro`,
         image,
