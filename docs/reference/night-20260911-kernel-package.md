@@ -48,6 +48,21 @@ Corepack enablement fails before the package manager is available. The artifact
 mount must be a new empty directory; the script rejects a non-empty target and
 never clears an existing result.
 
+On a Windows checkout, verify the archive preserves the entrypoint's LF content
+before the Docker build; the image also normalizes this one copied script:
+
+```powershell
+$archive = Join-Path $env:TEMP "orca-entry-$PID.tar"
+$extract = Join-Path $env:TEMP "orca-entry-$PID"
+New-Item -ItemType Directory -Path $extract | Out-Null
+git archive --format=tar --output=$archive HEAD config/docker/kernel-runtime/build-linux-artifact.sh
+tar -xf $archive -C $extract
+if ([IO.File]::ReadAllBytes((Join-Path $extract 'config/docker/kernel-runtime/build-linux-artifact.sh')) -contains 13) {
+  throw 'Entrypoint archive contains CRLF'
+}
+Remove-Item -LiteralPath $archive, $extract -Recurse -Force
+```
+
 The resulting `kernel-linux-artifacts-<SHA>/` contains:
 
 - `packages/orca-linux.AppImage` and the versioned `orca-ide_*.deb`;

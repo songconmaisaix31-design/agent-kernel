@@ -24,6 +24,7 @@ RUN corepack enable pnpm \
 WORKDIR /workspace
 
 COPY config/docker/kernel-runtime/build-linux-artifact.sh /usr/local/bin/build-linux-artifact
-RUN chmod 755 /usr/local/bin/build-linux-artifact
+RUN sed -i 's/\r$//' /usr/local/bin/build-linux-artifact \
+  && chmod 755 /usr/local/bin/build-linux-artifact
 
 ENTRYPOINT ["/usr/local/bin/build-linux-artifact"]
