@@ -12,7 +12,7 @@ The review used the isolated Git archive export at `C:\Users\DW\AppData\Local\Or
 
 The candidate tree ID was `592c5da16e77a460aa005ff16fa5f86df6c2af1a` and the exported `terminal-readiness-codex-prompt.ts` SHA-256 was `03DC2A57DAABA88BD2A7B4B868F2004322BF21879B17F906C8A10AEFD075CD07`.
 
-Environment: Windows PowerShell, Node `v24.16.0`, no snapshot `node_modules`.
+Environment: Windows PowerShell, Node `v24.16.0`; dependencies were installed only in the private export with `pnpm install --frozen-lockfile --ignore-scripts --offline` (1,280 packages, 0 downloads).
 
 ```powershell
 $env:CANDIDATE_SNAPSHOT = '<fixed export path>'
@@ -22,8 +22,9 @@ pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/terminal-
 
 Results:
 
-- Private fixed-source execution harness: 4 discovered, 4 passed, 0 failed. It executed the candidate matcher after only removing TypeScript annotations in the private harness, and checked the candidate runtime's narrow wiring.
-- Candidate-native Vitest: **not executed**; `pnpm` reported `Command "vitest" not found`. No dependency installation, lockfile change, or other checkout mutation was attempted.
+- Candidate-native Vitest: 1 file passed; 5 tests passed; 0 failed (`vitest v4.1.5`).
+- Candidate Node type check: `pnpm exec tsc --noEmit -p config/tsconfig.node.json --composite false` passed with exit 0 and no diagnostics.
+- Private fixed-source execution harness: 4 discovered, 4 passed, 0 failed. This is supplementary evidence only: it executed the candidate matcher after only removing TypeScript annotations in the private harness, and checked the candidate runtime's narrow wiring.
 - `git diff --check <parent> <candidate>` passed with no whitespace errors.
 
 ## What was checked
