@@ -40,12 +40,12 @@ if ! dpkg --compare-versions "$compiler_version" ge 12.2; then
   exit 69
 fi
 printf 'compiler=%s\n' "$compiler_version"
-pnpm install --frozen-lockfile --force
+pnpm install --frozen-lockfile
 pnpm run build:linux
 
 artifact_dir=$(mktemp -d)
 trap 'rm -rf "$artifact_dir"' EXIT
-find release -maxdepth 1 -type f \( -name '*.AppImage' -o -name '*.deb' \) \
+find dist -maxdepth 1 -type f \( -name '*.AppImage' -o -name '*.deb' \) \
   -exec cp -- '{}' "$artifact_dir" \;
 
 if ! compgen -G "$artifact_dir/*.AppImage" >/dev/null; then
