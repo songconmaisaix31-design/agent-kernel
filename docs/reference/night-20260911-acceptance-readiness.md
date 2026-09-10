@@ -180,14 +180,26 @@ server-mediated acceptance invocations above with actual Run/Task/Dispatch IDs.
 
 ## Follow-up: required Linux sandbox regression boundary
 
-The independent regression at
+The first revision of this regression was unsafe on Windows: its `.cmd` shim was
+not proven before starting a runner, so it invoked the real Docker executable.
+W0 confirmed the resulting orphan `node.exe` PID 96476 (created
+2026-09-11T01:11:17.96535+08:00) and real Docker volume
+`orca-headless-pairing-artifact-96476-1789060277991` (created 17:11:18Z); W0,
+not W2, stopped the exact proven orphan PID 96476 and Docker children 97964/95256
+after creation-time verification and preserved the volume. Therefore the earlier
+claim that no Docker was invoked is withdrawn.
+
+The repaired independent regression at
 `config/scripts/headless-required-sandbox.test.mjs` uses Node's built-in
-`node:test`/`assert`, a temporary fake Docker executable, and (on Linux) a
-temporary executable `orca-ide` child. It exercises the W1 contract without
-running Docker: `--require-sandbox` must become `ORCA_REQUIRE_SANDBOX=1`, strict
-pairing must select extracted `orca-ide`, ready-like output without
-`SANDBOX_OK` or with namespace `EPERM` must not pass, explicit sandbox disable
-must be rejected, and non-strict existing arguments remain usable.
+`node:test`/`assert`, a Linux-only temporary fake Docker executable, and bounded
+child-process calls (5 seconds, 1 MiB). Before each harness it executes the
+shim's unique probe token, so failure to intercept prevents the runner from
+starting; on non-Linux platforms every fixture is skipped before any runner or
+Docker command is started. It asserts `--require-sandbox` forwards
+`ORCA_REQUIRE_SANDBOX=1`, strict pairing reports only a successful startup
+validation, stale ready plus `SANDBOX_OK` after container exit fails, an exited
+owned launcher cannot borrow an unrelated `orca-ide --serve` process, and
+implicit sandbox disable is rejected.
 
 Run it only after the W1 implementation is present in the same checkout:
 
