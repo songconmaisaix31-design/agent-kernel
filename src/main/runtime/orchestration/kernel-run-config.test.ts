@@ -172,22 +172,27 @@ describe('Kernel Run persistence', () => {
       db.createStartingWorkerDispatch({
         taskId: plan.tasks[0].key,
         expectedKernelConfig: configured.kernel_config,
+        expectedKernelGeneration: configured.consumer_generation,
+        expectedKernelOwner: { terminalHandle: 'term_coord', paneKey: 'pane_coord' },
         retryOf: 'ctx_forged',
         startOptions: {
-          worktree: 'repo::worker',
+          worktree: 'id:repo::worker',
           repo: 'id:repo',
           baseBranch: 'a'.repeat(40),
           kernelRework: {
             priorDispatchId: 'ctx_forged',
+            originDispatchId: 'ctx_forged',
             resourceId: 'wtr_forged',
             worktreeId: 'repo::worker',
             terminalHandle: 'term_worker',
+            historicalTerminalHandle: 'term_worker',
             paneKey: 'tab_worker:leaf_worker',
             processIncarnation: 'runtime:pty:1',
             hostScope: '{"kind":"local"}',
             branch: 'worker',
             repoId: 'repo',
-            runtimeEpoch: 'runtime'
+            runtimeEpoch: 'runtime',
+            currentRuntimeEpoch: 'current-runtime'
           }
         }
       })

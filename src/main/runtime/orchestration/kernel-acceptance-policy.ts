@@ -73,15 +73,18 @@ const NewTopLevelStartBinding = z.object({
 const KernelReworkBinding = z
   .object({
     priorDispatchId: z.string().min(1),
+    originDispatchId: z.string().min(1),
     resourceId: z.string().min(1),
     worktreeId: z.string().min(1),
     terminalHandle: z.string().min(1),
+    historicalTerminalHandle: z.string().min(1),
     paneKey: z.string().min(1),
     processIncarnation: z.string().min(1),
     hostScope: z.string(),
     branch: z.string().min(1),
     repoId: z.string().min(1),
-    runtimeEpoch: z.string().min(1)
+    runtimeEpoch: z.string().min(1),
+    currentRuntimeEpoch: z.string().min(1)
   })
   .strict()
 const ReworkStartBinding = z.object({

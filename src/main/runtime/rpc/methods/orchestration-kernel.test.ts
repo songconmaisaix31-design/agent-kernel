@@ -837,5 +837,4 @@ describe('Kernel service admission', () => {
     const result = await dispatch({}, { runtime })
     expect(result).toMatchObject({ injected: false, dispatch: { task_id: taskId } })
   })
-
 })

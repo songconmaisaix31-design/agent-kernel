@@ -142,15 +142,31 @@ export function admitKernelWorkerStart(
 
 export async function requireKernelLocalRepo(
   runtime: OrcaRuntimeService,
+  runId: string,
   snapshot: string | null,
   params: WorkerStartInput
 ): Promise<void> {
   if (snapshot === null) {
     return
   }
-  const repo = await runtime.showRepo(params.repo as string)
+  const run = runtime.getOrchestrationDb().getRun(runId)
+  if (!run || run.kernel_config !== snapshot) {
+    throw new OrchestrationError(
+      'kernel_config_changed',
+      'Run policy changed during Worker preparation; retry from current state.'
+    )
+  }
+  const config = readKernelRunConfig(run)
+  if (!config) {
+    throw new OrchestrationError(
+      'kernel_config_changed',
+      'Run policy changed during Worker preparation; retry from current state.'
+    )
+  }
+  const repoSelector = params.repo ?? `id:${config.repoId}`
+  const repo = await runtime.showRepo(repoSelector as string)
   if (
-    `id:${repo.id}` !== params.repo ||
+    `id:${repo.id}` !== repoSelector ||
     !isGitRepoKind(repo) ||
     repo.connectionId ||
     (repo.executionHostId && repo.executionHostId !== 'local') ||
@@ -238,7 +254,10 @@ export async function recheckKernelWorkerBase(
     const run = runtime.getOrchestrationDb().getRun(runId)
     const config = run && readKernelRunConfig(run)
     if (!config) {
-      throw new OrchestrationError('kernel_config_changed', 'Run policy changed during Worker preparation.')
+      throw new OrchestrationError(
+        'kernel_config_changed',
+        'Run policy changed during Worker preparation.'
+      )
     }
     await verifyKernelDependencyLocation(runtime, config.repoId, base, worktreeId)
   }
@@ -271,7 +290,10 @@ export function prepareKernelWorkerStart(
     runGeneration: admittedRun.consumer_generation,
     runOwner:
       admittedRun.coordinator_handle && admittedRun.coordinator_pane_key
-        ? { terminalHandle: admittedRun.coordinator_handle, paneKey: admittedRun.coordinator_pane_key }
+        ? {
+            terminalHandle: admittedRun.coordinator_handle,
+            paneKey: admittedRun.coordinator_pane_key
+          }
         : undefined,
     taskSpec,
     recheckAdmission: () => recheckKernelWorkerStart(runtime, runId, params, snapshot, evidence),
