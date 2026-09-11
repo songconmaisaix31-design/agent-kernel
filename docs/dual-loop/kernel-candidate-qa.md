@@ -12,6 +12,8 @@ Canceled-prompt source candidate `7e6f721aa175cb02edee12004b96e218504b56db`, a d
 
 Kernel same-owner rework checkpoint `6bf37be657ce204fef30d50523b6dd984c471be8` is **rejected**: its own focused suite fails 7/13, and independent real-source tests prove that it rejects both a physically preserved PTY after an application runtime restart and a second rework of the same retained resource. Its direct child `51e43c9af8ca4c183179ea81ae0020e4f80a6ded` fixes those boundaries and is **accepted for source only**.
 
+The final combined source `516da10cd7ad26bc8a4d3a7900b9e22c304a66c5` and its unpacked Windows package are **accepted for bounded nonvisual readiness**. Independent package inspection, Electron-ABI native loading, isolated app/CLI readiness, and a real scratch PTY command passed; direct PTY close returned an `unverifiable` stop verdict, but an exact-handle shell `exit` completed and authoritative inventory reached zero before the exact owned app was gracefully stopped.
+
 ## Provenance
 
 - Required baseline: `01bd406abb787a6b2fd8064e66bcefb75971b8ff`
@@ -23,6 +25,9 @@ Kernel same-owner rework checkpoint `6bf37be657ce204fef30d50523b6dd984c471be8` i
 - Accepted canceled-prompt source follow-up: `7e6f721aa175cb02edee12004b96e218504b56db`
 - Rejected same-owner rework checkpoint: `6bf37be657ce204fef30d50523b6dd984c471be8`
 - Accepted same-owner rework source follow-up: `51e43c9af8ca4c183179ea81ae0020e4f80a6ded`
+- Final combined source: `516da10cd7ad26bc8a4d3a7900b9e22c304a66c5`
+- Final combined source tree: `2a2d5bd8f4158ef12691909ab500d3431d56ddad`
+- W-PACK2 delivery/report commit: `a113444950ce6372dce30f789715945d88a9a8ee`
 - Initial W-PACK build report commit: `394a633f9fb8dc7a25b356d9d46ea89074951506`
 - Updated native/package report commit: `818e2e89c4d3d2ddae5a53631d71a84734715134`
 - Candidate tree: `592c5da16e77a460aa005ff16fa5f86df6c2af1a`
@@ -280,6 +285,66 @@ The corrected matrix admits both intended positives: the same pane/incarnation/r
 Source inspection confirms the new dispatch stores the current runtime epoch while preserving the prior historical epoch in its rework binding. Current authority is tied to the requested terminal, current runtime, managed non-orphan worktree, equivalent pane, exact historical/resource/current process incarnation, and equal local host scope. The broader plain-shell `runUse` handle-remint gap remains a known limitation, but controller-bound Codex agents can restore the exact exported handle as documented above; no pane-only owner relaxation is part of this source acceptance.
 
 W-QA accepts `51e43c9a` for source only. It was not packaged, launched, or used against D0, so combined-package, live controller restoration, native switch, and rendered UI remain outside this verdict.
+
+## Final combined Windows package
+
+W-PACK2 built the immutable combined source `516da10cd7ad26bc8a4d3a7900b9e22c304a66c5`, tree `2a2d5bd8f4158ef12691909ab500d3431d56ddad`, into `kernel-rework-candidate/win-unpacked`. Its final report commit is `a113444950ce6372dce30f789715945d88a9a8ee`; the report records 17 test files with 1,861 passing tests, three passing typechecks, passing scoped lint/format/build/native/package gates, and the unchanged known base/combined max-lines failure with the same 18 entries. W-QA read these build results but did not duplicate the already-green source suite.
+
+Independent byte inspection matched W-PACK2 exactly:
+
+| Payload | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `Orca.exe` | 225,470,464 | `7EEF1E2BC1BB70086E468C84DE01E9A853189B2F20F8365B45FC47513A8C933E` |
+| `resources/app.asar` | 132,784,819 | `3629081F4824CCDA7F2BEDF72FDE44E8BB4983BA30A80BB49A07D50C9C69D287` |
+| `resources/bin/orca.exe` | 6,144 | `357AA4BF60EC8002AD7CDD78F7FC284B14300E9C6957C58F5B8B9A27AF3F8D9C` |
+| packaged registry addon | 155,408 | `5D5BB2D9FC233A3A115C3EC11F3D378569A12AA120DC5E6794E8546293CC250A` |
+| unpacked daemon entry | 144,402 | `C9F8DD4DF76D2C91339BB6C62631F178F581A3B6CF02D86230AE642F75E1C519` |
+
+The asar manifest identifies Orca `1.4.188` and `out/main/index.js`. Direct extraction of that compiled main payload found the final canceled-prompt matcher `^would you like to run (?:this|the following) command\?$`, the current-runtime epoch check, immutable origin-dispatch lineage, and the rework terminal-identity error path. W-PACK2's first two archive-verifier attempts incorrectly looked for built JavaScript at the archive root; its corrected platform-path verifier found all 66 expected compiled entries. W-QA's extraction and runtime checks use the actual package paths, so those retained verifier-path failures are not presented as product defects.
+
+Using repository Electron `43.1.0` in run-as-Node mode, W-QA loaded the package's actual Electron ABI `148` modules: `windows-native-registry` completed a read-only HKCU Environment query, and node-pty loaded its ConPTY native binding without spawning a terminal. The exact packaged CLI root help and `--version` fallback both exited 0; as before, `--version` produces help rather than a distinct version value, so the app version claim comes from the live runtime status.
+
+### Isolated final-package runtime
+
+The exact `kernel-rework-candidate/win-unpacked/Orca.exe` was started with `Start-Process -WindowStyle Hidden`, `--user-data-dir` set to `W-QA/final-package-runtime/profile`, and matching `ORCA_USER_DATA_PATH`, `ORCA_EXPERIMENT_CODEX_SYSTEM_HOME`, and `ORCA_CLI_COMMAND`. The profile, experiment system home, Git scratch folder, and every generated marker remained under the authorized W-QA evidence directory.
+
+| Check | Result |
+| --- | --- |
+| Exact application identity | PASS; PID `122580`, exact package executable, product version `1.4.188.0` |
+| Runtime discovery and readiness | PASS; isolated profile named PID `122580` and runtime `94c76638-b9de-41d1-860f-eeff787492ea`; exact packaged CLI returned app `1.4.188`, runtime reachable/ready, graph ready |
+| Scratch registration | PASS; exact CLI registered only `final-package-runtime/scratch-folder` as repo `619401b4-491e-455e-bbae-727bc3c04b34` |
+| Real PTY command | PASS; handle `term_4c7b8faa-0c7a-4027-bb69-75caf7f54485`, PTY suffix `@@699d3143`, incarnation `e68923f8-d063-49b6-8759-c7ef17f43ecc`; CLI output and files both showed `FINAL_PACKAGE_PTY_OK` and the exact scratch cwd |
+| Direct terminal close | BOUNDED ANOMALY; first call timed out, retry returned `ptyKilled=false`, `ptyStopVerdict=unverifiable`, and inventory still showed the exact PTY connected/writable |
+| Terminal cleanup fallback | PASS; `terminal send --text exit --enter` targeted only the exact owned PowerShell handle, `terminal wait --for exit` was satisfied with reported exit code 1, and authoritative worktree inventory then returned zero terminals |
+| Exact application cleanup | PASS; seven top-level windows belonging only to verified PID `122580` received standard `WM_CLOSE`, all posts succeeded, and the PID exited within 30 seconds |
+| Final isolation state | PASS; exact candidate CLI returned app/runtime `not_running`, and zero processes remained whose executable path was under the final package root |
+
+The close anomaly is preserved rather than rewritten as a clean direct close. It did not prevent bounded acceptance because the exact session accepted its own graceful `exit`, disappeared from authoritative inventory, and no owned resource remained; it is not evidence that an unknown or remote process exited.
+
+The bounded runtime controls were:
+
+```powershell
+$env:ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = '<W-QA>/final-package-runtime/system-codex-home'
+$env:ORCA_USER_DATA_PATH = '<W-QA>/final-package-runtime/profile'
+$env:ORCA_CLI_COMMAND = '<kernel-rework-candidate>/win-unpacked/resources/bin/orca.exe'
+Start-Process -FilePath '<kernel-rework-candidate>/win-unpacked/Orca.exe' `
+  -ArgumentList "--user-data-dir=$env:ORCA_USER_DATA_PATH" -WindowStyle Hidden -PassThru
+& $env:ORCA_CLI_COMMAND status --json
+& $env:ORCA_CLI_COMMAND repo add --path '<W-QA>/final-package-runtime/scratch-folder' --json
+& $env:ORCA_CLI_COMMAND terminal create --worktree 'path:<scratch-folder>' `
+  --title W-QA-FINAL-PACKAGE --command 'powershell.exe -NoLogo -NoProfile' --json
+& $env:ORCA_CLI_COMMAND terminal send --terminal term_4c7b8faa-0c7a-4027-bb69-75caf7f54485 `
+  --text '<evidence-local marker/cwd command>' --enter --json
+& $env:ORCA_CLI_COMMAND terminal read --terminal term_4c7b8faa-0c7a-4027-bb69-75caf7f54485 --limit 120 --json
+& $env:ORCA_CLI_COMMAND terminal close --terminal term_4c7b8faa-0c7a-4027-bb69-75caf7f54485 --json
+& $env:ORCA_CLI_COMMAND terminal send --terminal term_4c7b8faa-0c7a-4027-bb69-75caf7f54485 --text exit --enter --json
+& $env:ORCA_CLI_COMMAND terminal wait --terminal term_4c7b8faa-0c7a-4027-bb69-75caf7f54485 --for exit --timeout-ms 30000 --json
+& $env:ORCA_CLI_COMMAND terminal list --worktree 'path:<scratch-folder>' --json
+# Enumerate top-level windows for verified PID 122580 only, PostMessage(WM_CLOSE), then wait 30 seconds.
+& $env:ORCA_CLI_COMMAND status --json
+```
+
+No model/account login, controller agent, D0 switch, stable profile access, runtime/profile mutation outside the evidence tree, or rendered UI action was performed. Existing focused tests prove exact exported controller-handle recovery, and W0 owns the actual post-switch D0 proof; this isolated plain PowerShell smoke does not substitute for either. Raw evidence is under `W-evidence/W-QA/final-package/` and `W-evidence/W-QA/final-package-runtime/`.
 
 ## Remote delivery
 
