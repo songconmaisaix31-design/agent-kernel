@@ -8,9 +8,10 @@ Read-only review of the Kernel source available in this worktree. Fixed baseline
 are byte-identical between those revisions. No run, worker, profile, runner, Docker,
 or product repository was touched.
 
-## Finding: multi-leaf integration has no trusted Kernel path
+## Confirmed boundary: multi-leaf integration is external to one Kernel Run
 
-This is an explicit product-flow blocker, not a silent acceptance bypass.
+This is an explicit supported boundary, not a new Kernel defect or a silent
+acceptance bypass.
 
 Reproducible plan shape:
 
@@ -29,12 +30,19 @@ rule; `kernel-dependency-base.test.ts:465-473` asserts the multi-parent rejectio
 An integration task that names only `L1` can start from `L1`'s candidate, but it has
 no trusted inclusion of `L2`'s candidate.
 
-Impact: D0's contract parent plus disjoint leaf tasks is supported only through
-independent leaf acceptance. Final composition must remain an explicitly external,
-manual integration boundary, or a future Kernel owner must add a separately approved
-multi-leaf integration design. Suggested owner paths, if authorized: `kernel-dependency-base.ts`,
-`kernel-candidate-acceptance.ts`, `orchestration-kernel-admission.ts`, and their
-corresponding tests. The candidate owner must not self-authorize that authority change.
+The proposed native process is viable: after all leaf candidates are fixed and
+independently accepted, create a new single-task integration Run with no Kernel
+dependencies. Its approved plan base is the fixed product base (or the audited common
+parent candidate); its task body names the reviewed leaf SHAs as input, and its sole
+integration worker combines them in a separate worktree. The new Run establishes its
+own policy, candidate, and acceptance; it does not treat old accepted records as a new
+authorization. `kernelDependencyBase` returns the new Run's `plan.baseCommit` for its
+dependency-free task (`kernel-dependency-base.ts:33-35`), while candidate review requires
+the final integration candidate to descend from that fixed base (`kernel-candidate-review.ts:126-158`).
+
+The integration task's one write domain must cover the audited combined file set; a
+conflict or an unreviewed path remains a return-to-leaf-owner condition. No Kernel source
+change is needed for this boundary.
 
 ## Checked boundaries with no incorrect-acceptance finding
 
