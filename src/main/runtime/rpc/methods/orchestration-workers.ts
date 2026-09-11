@@ -52,7 +52,10 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         base: kernelBase,
         taskSpec,
         recheckBase,
-        recheckAdmission
+        recheckAdmission,
+        recheckRework,
+        runGeneration,
+        runOwner
       } = prepareKernelWorkerStart(
         runtime,
         run.id,
@@ -61,6 +64,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         orchestrationCompatibilityEvidence
       )
       await recheckBase()
+      const kernelRework = await recheckRework()
       if (params.on) {
         return startFederatedWorker({
           params,
@@ -116,11 +120,12 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
       await recheckBase()
       const startOptions = {
         ...(kernelBase?.dependency ? { kernelBase } : {}),
+        ...(kernelRework ? { kernelRework } : {}),
         worktree: requestedWorktree,
         resolvedWorktreeId: resolvedWorktree?.id ?? null,
         name: params.name ?? null,
-        repo: params.repo ?? creationWorktree?.repoId ?? null,
-        baseBranch: params.baseBranch ?? null,
+        repo: kernelRework ? `id:${kernelRework.repoId}` : (params.repo ?? creationWorktree?.repoId ?? null),
+        baseBranch: kernelRework ? kernelBase?.baseCommit ?? null : (params.baseBranch ?? null),
         terminal: params.terminal ?? null,
         agent: agent ?? null,
         launch: launch.receipt,
@@ -133,9 +138,12 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
           : 'existing_worktree'
       }
       recheckAdmission()
+      await recheckRework()
       const started = db.createStartingWorkerDispatch({
         taskId: task.id,
         expectedKernelConfig: kernelSnapshot,
+        expectedKernelGeneration: runGeneration,
+        expectedKernelOwner: runOwner,
         retryOf: params.retryOf,
         startOptions,
         runtimeEpoch: runtime.getRuntimeId(),
@@ -219,6 +227,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
         persistWorkerReadinessStage(setupStage)
 
         await recheckBase(resolvedWorktree.id)
+        await recheckRework()
         failedStage = 'agent_readiness'
         const wait = await runtime.waitForTerminal(terminalHandle, {
           condition: 'tui-idle',
@@ -235,6 +244,7 @@ export const ORCHESTRATION_WORKER_START_METHODS: RpcMethod[] = [
               : `Agent did not become ready (${wait.status}).`
           )
         }
+        await recheckRework()
         const terminalAuthority = requireWorkerAuthority(runtime, terminalHandle)
         const capability = db.prepareStartingWorkerAuthority({
           dispatchId: started.dispatch.id,
