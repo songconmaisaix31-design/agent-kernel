@@ -358,5 +358,6 @@ No model/account login, controller agent, D0 switch, stable profile access, runt
 - No Electron skill was available in this session, so no rendered Orca UI validation was attempted or claimed.
 - Visual Studio native compilation remains unavailable; W-QA did not rebuild native code or install system tooling.
 - Stable and D0 runtime profiles, credentials, running applications, Docker resources, production code, lockfiles, and root configuration were not changed. The only generated runtime/profile state is the disposable evidence-local tree documented above.
+- All three QA-authored runtime-discovery summaries that serialized an `authToken` now retain only `<redacted>`; a field-name-only rescan found no other copied runtime credential in QA summaries. Generated profile/auth stores were excluded and not read during this cleanup.
 - The rejected `3b97f0e3` follow-up was source-tested only; no application, packaged candidate, model session, D0 replacement, rendered UI, or control workaround was launched for it.
 - The rejected `6bf37be6` rework checkpoint was source-tested only; it was not used to replace the active Fork or mutate any live runtime.
