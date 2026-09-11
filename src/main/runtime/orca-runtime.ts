@@ -13,7 +13,10 @@ import {
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
 import { TerminalReadinessDiagnostics } from './terminal-readiness-diagnostics'
-import { isDismissedCodexRateLimitReminder } from './terminal-readiness-codex-prompt'
+import {
+  isDismissedCodexCanceledCommandPrompt,
+  isDismissedCodexRateLimitReminder
+} from './terminal-readiness-codex-prompt'
 import { planWorktreeSortOrderUpdates } from '../../shared/worktree/sort-order-update'
 import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
 import {
@@ -1532,6 +1535,7 @@ type RuntimePtyWorktreeRecord = {
 
 type TerminalAgentStatusSnapshot = {
   waitText: string
+  waitTextUpdatedAt: number | null
   waitBlockedAt: number | null
   title: string | null
   titleStatus: AgentStatus | null
@@ -18811,6 +18815,7 @@ export class OrcaRuntimeService {
       )
       return {
         waitText,
+        waitTextUpdatedAt: pty.pty.lastOutputAt,
         waitBlockedAt: pty.pty.waitBlockedAt,
         title: ptyTitle?.title ?? null,
         titleStatus: ptyTitle
@@ -18837,6 +18842,7 @@ export class OrcaRuntimeService {
     )
     return {
       waitText: buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview),
+      waitTextUpdatedAt: leaf.lastOutputAt,
       waitBlockedAt: leaf.waitBlockedAt,
       title: title?.title ?? null,
       titleStatus: title ? detectAgentStatusFromTitle(title.title) : leaf.lastAgentStatus,
@@ -18925,6 +18931,14 @@ export class OrcaRuntimeService {
     }
     if (terminal.titleStatus === 'permission' && terminal.titleStatusIsLive) {
       return { source: 'title' }
+    }
+    if (
+      explicitStatus &&
+      terminal.waitTextUpdatedAt !== null &&
+      explicitStatus.updatedAt < terminal.waitTextUpdatedAt &&
+      isDismissedCodexCanceledWaitText(terminal.waitText)
+    ) {
+      return null
     }
     if (explicitStatus?.status !== 'permission') {
       return null
@@ -19571,11 +19585,26 @@ export class OrcaRuntimeService {
         lifecycle.updatedAt > explicit.updatedAt ||
         (lifecycle.updatedAt === explicit.updatedAt && lifecycle.status === 'permission'))
     const terminal = this.getTerminalAgentStatusSnapshot(handle, ptyId)
-    const status = this.hasAuthoritativeTerminalWaitPermission(terminal, explicit, lifecycle)
+    const observedStatus = this.hasAuthoritativeTerminalWaitPermission(
+      terminal,
+      explicit,
+      lifecycle
+    )
       ? 'permission'
       : lifecycleIsNewer
         ? lifecycle.status
         : (explicit?.status ?? ptyStatus ?? null)
+    const observedStatusUpdatedAt = lifecycleIsNewer
+      ? lifecycle.updatedAt
+      : (explicit?.updatedAt ?? -1)
+    const status =
+      observedStatus === 'permission' &&
+      !(terminal.titleStatusIsLive && terminal.titleStatus === 'permission') &&
+      terminal.waitTextUpdatedAt !== null &&
+      observedStatusUpdatedAt < terminal.waitTextUpdatedAt &&
+      isDismissedCodexCanceledWaitText(terminal.waitText)
+        ? 'idle'
+        : observedStatus
     return {
       generation: this.getPtyLifecycleGeneration(ptyId),
       permissionSequence: this.agentPromptPermissionSequenceByPtyId.get(ptyId) ?? 0,
@@ -40302,11 +40331,22 @@ function findActionableTerminalWaitBlockedSignal(
   if (isDismissedCodexRateLimitReminder(normalized, blockedSignal.index)) {
     return null
   }
+  if (isDismissedCodexCanceledCommandPrompt(normalized, blockedSignal.index)) {
+    return null
+  }
   const dismissedModalIndex = findDismissedStartupModalIndex(normalized)
   // Why: a live prompt after the modal means it was dismissed → signal no longer actionable, even mid-run (Cursor never reports idle via OSC title).
   return dismissedModalIndex !== null && dismissedModalIndex > blockedSignal.index
     ? null
     : blockedSignal
+}
+
+function isDismissedCodexCanceledWaitText(waitText: string): boolean {
+  const normalized = waitText.toLowerCase()
+  const blockedSignal = findTerminalWaitBlockedSignal(normalized)
+  return (
+    blockedSignal !== null && isDismissedCodexCanceledCommandPrompt(normalized, blockedSignal.index)
+  )
 }
 
 // Why: a live prompt (idle OR busy) proves the startup modal was dismissed, so a mid-run Cursor lane stops reporting stale trust hits.

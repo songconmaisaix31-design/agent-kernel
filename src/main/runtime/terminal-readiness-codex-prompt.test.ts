@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isDismissedCodexRateLimitReminder } from './terminal-readiness-codex-prompt'
+import {
+  isDismissedCodexCanceledCommandPrompt,
+  isDismissedCodexRateLimitReminder
+} from './terminal-readiness-codex-prompt'
+import { computeTerminalTailWaitState } from './orca-runtime'
 
 const confirmation = 'press enter to confirm or esc to go back'
 
@@ -48,5 +52,74 @@ describe('dismissed Codex rate-limit reminder', () => {
       'reject'
     ]).toLowerCase()
     expect(isDismissedCodexRateLimitReminder(text, text.indexOf('permission required'))).toBe(false)
+  })
+})
+
+describe('dismissed Codex canceled command prompt', () => {
+  const canceledCommand = [
+    'press enter to confirm',
+    "✗ You canceled the request to run & 'C:/workspace/tool.cmd'",
+    '■ Conversation interrupted - tell the model what to do differently. Something went wrong?',
+    '› Ask Codex to do anything',
+    '  ⡀   ⠄',
+    'gpt-6-astra xhigh · C:\\workspace · task'
+  ].join('\n')
+
+  it('accepts the observed canceled request followed by a new input prompt', () => {
+    const text = canceledCommand.toLowerCase()
+    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(true)
+    expect(computeTerminalTailWaitState(text.split('\n'), '', '').signal).toBeNull()
+  })
+
+  it('accepts an explicit rejection boundary followed by a new input prompt', () => {
+    const text = canceledCommand.replace('canceled', 'rejected').toLowerCase()
+    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(true)
+  })
+
+  it('does not treat an ordinary idle prompt as a dismissal boundary', () => {
+    const text = ['press enter to confirm', '› Ask Codex to do anything'].join('\n').toLowerCase()
+    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(false)
+  })
+
+  it('does not accept quoted cancellation prose without Codex status markers', () => {
+    const text = [
+      'press enter to confirm',
+      'The screen said "You canceled the request to run".',
+      'The screen also said "Conversation interrupted - tell the model what to do differently."',
+      '› Ask Codex to do anything'
+    ]
+      .join('\n')
+      .toLowerCase()
+    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(false)
+  })
+
+  it('keeps a newer active permission prompt blocked', () => {
+    const text = [canceledCommand, 'permission required', 'allow once', 'allow always', 'reject']
+      .join('\n')
+      .toLowerCase()
+    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf('permission required'))).toBe(
+      false
+    )
+    expect(computeTerminalTailWaitState(text.split('\n'), '', '').signal?.reason).toBe(
+      'codex-interactive-prompt'
+    )
+  })
+
+  it.each([
+    ['account', 'codex account login required\npress enter to continue'],
+    ['payment', 'codex payment method required\npress enter to continue'],
+    ['security', 'codex security review required\npress enter to continue'],
+    [
+      'quota',
+      [
+        'approaching rate limits',
+        'switch to gpt-5.6-luna for lower credit usage?',
+        confirmation
+      ].join('\n')
+    ],
+    ['trust', 'do you trust this workspace?']
+  ])('keeps a newer active %s prompt blocked', (_kind, activePrompt) => {
+    const text = `${canceledCommand}\n${activePrompt}`.toLowerCase()
+    expect(computeTerminalTailWaitState(text.split('\n'), '', '').signal).not.toBeNull()
   })
 })
