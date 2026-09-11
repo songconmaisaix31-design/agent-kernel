@@ -80,6 +80,43 @@ describe('dismissed Codex canceled command prompt', () => {
     ).toBe(true)
   })
 
+  it('accepts the observed following-command heading', () => {
+    const text = canceledCommand
+      .replace('run this command?', 'run the following command?')
+      .toLowerCase()
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(true)
+  })
+
+  it('accepts a long structured approval menu before confirmation', () => {
+    const text = [
+      'would you like to run the following command?',
+      'environment',
+      '  local',
+      'reason',
+      '  verify the bounded package artifact without changing a profile.',
+      'command',
+      "  powershell.exe -nologo -noprofile -command '& {",
+      "    get-item -literalpath 'c:\\evidence\\candidate.exe' |",
+      '      select-object fullname,length,lastwritetime;',
+      "    get-filehash -algorithm sha256 -literalpath 'c:\\evidence\\candidate.exe' |",
+      '      select-object algorithm,hash;',
+      "    write-output 'bounded read-only verification complete'",
+      "  }'",
+      '› 1. yes, proceed',
+      '  2. yes, and do not ask again for this command',
+      '  3. no, tell codex what to do differently',
+      'press enter to confirm',
+      '✗ you canceled the request to run powershell.exe',
+      '■ conversation interrupted - tell the model what to do differently.',
+      '› ask codex to do anything'
+    ].join('\n')
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(true)
+  })
+
   it('does not treat an ordinary idle prompt as a dismissal boundary', () => {
     const text = ['press enter to confirm', '› Ask Codex to do anything'].join('\n').toLowerCase()
     expect(

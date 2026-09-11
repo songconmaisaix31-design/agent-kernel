@@ -16858,6 +16858,29 @@ describe('OrcaRuntimeService', () => {
     'gpt-6-astra xhigh · C:\\workspace · task\n'
   ].join('')
 
+  const observedLongCanceledCodexCommandBoundary = [
+    'Would you like to run the following command?',
+    'Environment',
+    '  local',
+    'Reason',
+    '  Verify the bounded package artifact without changing a profile.',
+    'Command',
+    "  powershell.exe -NoLogo -NoProfile -Command '& {",
+    "    Get-Item -LiteralPath 'C:\\evidence\\candidate.exe' |",
+    '      Select-Object FullName,Length,LastWriteTime;',
+    "    Get-FileHash -Algorithm SHA256 -LiteralPath 'C:\\evidence\\candidate.exe' |",
+    '      Select-Object Algorithm,Hash;',
+    "    Write-Output 'bounded read-only verification complete'",
+    "  }'",
+    '› 1. Yes, proceed',
+    '  2. Yes, and do not ask again for this command',
+    '  3. No, tell Codex what to do differently',
+    'Press enter to confirm',
+    '✗ You canceled the request to run powershell.exe',
+    '■ Conversation interrupted - tell the model what to do differently.',
+    '› Ask Codex to do anything'
+  ].join('\n')
+
   it('submits after Codex cancels a command prompt and renders a new input turn', async () => {
     vi.useFakeTimers()
     try {
@@ -16890,6 +16913,42 @@ describe('OrcaRuntimeService', () => {
       await vi.runAllTimersAsync()
       await expect(submission).resolves.toMatchObject({ handle, accepted: true })
       expect(writes.at(-1)).toBe('\r')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    [
+      'observed following-command heading',
+      canceledCodexCommandBoundary.replace('run this command?', 'run the following command?')
+    ],
+    ['observed long structured approval menu', observedLongCanceledCodexCommandBoundary]
+  ])('submits after cancellation for the %s', async (_scenario, output) => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          acknowledgeAgentPromptSubmit(runtime, 'pty-bg', data)
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => 'codex'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'codex'
+      })
+      runtime.onPtyData('pty-bg', output, Date.now())
+
+      await expect(runtime.getTerminalInteractiveWait(handle)).resolves.toBeNull()
+      const submission = runtime.sendTerminalAgentPrompt(handle, 'continue safely')
+      await vi.runAllTimersAsync()
+      await expect(submission).resolves.toMatchObject({ handle, accepted: true })
+      expect(writes).toContain('\r')
     } finally {
       vi.useRealTimers()
     }
