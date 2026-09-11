@@ -166,6 +166,35 @@ describe('Kernel Run persistence', () => {
     expect(db.getDispatchContext(plan.tasks[0].key)).toBeUndefined()
   })
 
+  it('rejects forged same-owner rework input at the transaction boundary', () => {
+    const configured = configureKernelRun(db, run, { repoId: 'repo', plan })
+    expect(() =>
+      db.createStartingWorkerDispatch({
+        taskId: plan.tasks[0].key,
+        expectedKernelConfig: configured.kernel_config,
+        retryOf: 'ctx_forged',
+        startOptions: {
+          worktree: 'repo::worker',
+          repo: 'id:repo',
+          baseBranch: 'a'.repeat(40),
+          kernelRework: {
+            priorDispatchId: 'ctx_forged',
+            resourceId: 'wtr_forged',
+            worktreeId: 'repo::worker',
+            terminalHandle: 'term_worker',
+            paneKey: 'tab_worker:leaf_worker',
+            processIncarnation: 'runtime:pty:1',
+            hostScope: '{"kind":"local"}',
+            branch: 'worker',
+            repoId: 'repo',
+            runtimeEpoch: 'runtime'
+          }
+        }
+      })
+    ).toThrow(/original unaccepted local Worker resource/)
+    expect(db.getDispatchContext(plan.tasks[0].key)).toBeUndefined()
+  })
+
   it('checks stale policy inside the transaction across two SQLite connections without a receipt', () => {
     const directory = mkdtempSync(join(tmpdir(), 'orca-kernel-race-'))
     directories.push(directory)

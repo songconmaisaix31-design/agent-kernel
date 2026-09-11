@@ -19,6 +19,11 @@ import { OrchestrationError } from '../../orchestration/orchestration-error'
 import type { RunRow } from '../../orchestration/types'
 import type { WorkerStartInput } from './orchestration-worker-start-schema'
 import { resolveRunScope } from './orchestration-run-scope'
+import {
+  assertKernelReworkRequest,
+  isKernelReworkRequest,
+  prepareKernelReworkStart
+} from './orchestration-kernel-rework'
 
 function verifiedKernelCaller(
   runtime: OrcaRuntimeService,
@@ -108,7 +113,10 @@ export function admitKernelWorkerStart(
     return null
   }
   requireKernelCoordinator(runtime, runId, params.from, evidence)
-  if (params.on || params.worktree !== 'new-top-level' || params.terminal) {
+  const rework = isKernelReworkRequest(params)
+  if (rework) {
+    assertKernelReworkRequest(params)
+  } else if (params.on || params.worktree !== 'new-top-level' || params.terminal) {
     throw new OrchestrationError(
       'kernel_unsupported_path',
       'Kernel supports only local new-top-level Workers.'
@@ -125,8 +133,10 @@ export function admitKernelWorkerStart(
       'Worker repository or base differs from the approved Run plan.'
     )
   }
-  params.repo = `id:${config.repoId}`
-  params.baseBranch = base.baseCommit
+  if (!rework) {
+    params.repo = `id:${config.repoId}`
+    params.baseBranch = base.baseCommit
+  }
   return run.kernel_config as string
 }
 
@@ -225,7 +235,12 @@ export async function recheckKernelWorkerBase(
   }
   recheck()
   if (base?.dependency) {
-    await verifyKernelDependencyLocation(runtime, params.repo!.slice(3), base, worktreeId)
+    const run = runtime.getOrchestrationDb().getRun(runId)
+    const config = run && readKernelRunConfig(run)
+    if (!config) {
+      throw new OrchestrationError('kernel_config_changed', 'Run policy changed during Worker preparation.')
+    }
+    await verifyKernelDependencyLocation(runtime, config.repoId, base, worktreeId)
   }
   recheck()
   return recheck
@@ -239,7 +254,12 @@ export function prepareKernelWorkerStart(
   evidence?: OrchestrationCompatibilityEvidence
 ) {
   const snapshot = admitKernelWorkerStart(runtime, runId, params, evidence)
+  const admittedRun = runtime.getOrchestrationDb().getRun(runId)
+  if (!admittedRun) {
+    throw new OrchestrationError('run_not_found', 'The Worker Run no longer exists.')
+  }
   const base = kernelWorkerBase(runtime, runId, params.task)
+  const rework = prepareKernelReworkStart({ runtime, runId, params, snapshot })
   const taskSpec =
     kernelTaskSpec(snapshot, params.task, nativeSpec) +
     (base?.dependency
@@ -248,8 +268,14 @@ export function prepareKernelWorkerStart(
   return {
     snapshot,
     base,
+    runGeneration: admittedRun.consumer_generation,
+    runOwner:
+      admittedRun.coordinator_handle && admittedRun.coordinator_pane_key
+        ? { terminalHandle: admittedRun.coordinator_handle, paneKey: admittedRun.coordinator_pane_key }
+        : undefined,
     taskSpec,
     recheckAdmission: () => recheckKernelWorkerStart(runtime, runId, params, snapshot, evidence),
+    recheckRework: rework.recheck,
     recheckBase: (worktreeId?: string) =>
       recheckKernelWorkerBase(runtime, runId, params, snapshot, base, evidence, worktreeId)
   }

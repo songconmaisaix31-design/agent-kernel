@@ -4,7 +4,14 @@ import { ensureMutationReceiptCapacity } from '../../mutation-receipt-capacity'
 import { CURRENT_CONTRACT_VERSION } from '../contract-constants'
 import { generateId } from '../generated-id'
 import type { OrchestrationDb } from '../orchestration-db'
-import { assertKernelWorkerPolicy } from '../../kernel-run-config'
+import {
+  assertKernelRunOwner,
+  assertKernelWorkerPolicy,
+  readKernelRunConfig
+} from '../../kernel-run-config'
+import { readKernelReworkStartBinding } from '../../kernel-acceptance-policy'
+import { assertKernelReworkStart } from '../../kernel-run-limits'
+import { kernelDependencyBase } from '../../kernel-dependency-base'
 
 export function createStartingWorkerDispatch(
   this: OrchestrationDb,
@@ -12,6 +19,8 @@ export function createStartingWorkerDispatch(
     taskId: string
     startOptions: unknown
     expectedKernelConfig?: string | null
+    expectedKernelGeneration?: number
+    expectedKernelOwner?: { terminalHandle: string; paneKey: string }
     launchTokenHash?: string
     retryOf?: string
     runtimeEpoch?: string
@@ -34,6 +43,35 @@ export function createStartingWorkerDispatch(
     assertKernelWorkerPolicy(this, params.taskId, params.expectedKernelConfig, {
       startOptions: params.startOptions
     })
+    const task = this.getTask(params.taskId)
+    if (!task) {
+      throw new OrchestrationError('task_not_found', `Task ${params.taskId} was not found.`)
+    }
+    const run = this.getRun(task.run_id)
+    const rework = readKernelReworkStartBinding(params.startOptions)
+    if (rework) {
+      const config = run && readKernelRunConfig(run)
+      if (!run || !config) {
+        throw new OrchestrationError('kernel_rework_invalid', 'Rework requires an active Kernel policy.')
+      }
+      if (
+        params.expectedKernelGeneration === undefined ||
+        run.consumer_generation !== params.expectedKernelGeneration ||
+        !params.expectedKernelOwner
+      ) {
+        throw new OrchestrationError('consumer_fenced', 'Rework coordinator generation changed.')
+      }
+      assertKernelRunOwner(this, run, params.expectedKernelOwner)
+      assertKernelReworkStart(
+        this,
+        run,
+        config,
+        task,
+        kernelDependencyBase(this, run, config, task.id),
+        rework,
+        params.retryOf
+      )
+    }
     if (params.mutationReceipt) {
       const receipt = params.mutationReceipt
       const existing = this.getMutationReceipt(receipt.callerFingerprint, receipt.requestId)
@@ -58,11 +96,7 @@ export function createStartingWorkerDispatch(
         )
         .run(receipt.callerFingerprint, receipt.requestId, receipt.method, receipt.payloadHash)
     }
-    const task = this.getTask(params.taskId)
-    if (!task) {
-      throw new OrchestrationError('task_not_found', `Task ${params.taskId} was not found.`)
-    }
-    if (params.retryOf) {
+    if (params.retryOf && !rework) {
       const prior = this.getDispatchContextById(params.retryOf)
       const priorWorker = this.getWorkerDispatch(params.retryOf)
       const latest = this.getDispatchContext(task.id)
@@ -79,7 +113,7 @@ export function createStartingWorkerDispatch(
           `Task ${task.id} cannot retry from Dispatch ${params.retryOf}.`
         )
       }
-    } else if (task.status !== 'ready') {
+    } else if (!params.retryOf && task.status !== 'ready') {
       throw new OrchestrationError(
         'task_not_startable',
         `Task ${task.id} is ${task.status}; only a ready Task can start.`

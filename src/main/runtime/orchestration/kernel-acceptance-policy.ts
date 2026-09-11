@@ -64,12 +64,34 @@ export function kernelAcceptanceStamp(
   })
 }
 
-const StartBinding = z.object({
+const NewTopLevelStartBinding = z.object({
   repo: z.string(),
   baseBranch: z.string(),
   worktree: z.literal('new-top-level'),
   kernelBase: KernelBase.optional()
 })
+const KernelReworkBinding = z
+  .object({
+    priorDispatchId: z.string().min(1),
+    resourceId: z.string().min(1),
+    worktreeId: z.string().min(1),
+    terminalHandle: z.string().min(1),
+    paneKey: z.string().min(1),
+    processIncarnation: z.string().min(1),
+    hostScope: z.string(),
+    branch: z.string().min(1),
+    repoId: z.string().min(1),
+    runtimeEpoch: z.string().min(1)
+  })
+  .strict()
+const ReworkStartBinding = z.object({
+  repo: z.string(),
+  baseBranch: z.string(),
+  worktree: z.string().min(1),
+  kernelBase: KernelBase.optional(),
+  kernelRework: KernelReworkBinding
+})
+const StartBinding = z.union([NewTopLevelStartBinding, ReworkStartBinding])
 export const AcceptedBinding = z
   .object({
     status: z.literal('accepted'),
@@ -98,5 +120,16 @@ function parseStored<T>(schema: z.ZodType<T>, text: string, code: string): T {
 }
 export const parseKernelStartBinding = (text: string) =>
   parseStored(StartBinding, text, 'kernel_dispatch_mismatch')
+export type KernelReworkStartBinding = z.infer<typeof ReworkStartBinding>
+export const readKernelReworkStartBinding = (input: unknown) => {
+  if (!input || typeof input !== 'object' || !('kernelRework' in input)) {
+    return null
+  }
+  const parsed = ReworkStartBinding.safeParse(input)
+  if (!parsed.success) {
+    throw new OrchestrationError('kernel_rework_invalid', 'Malformed Kernel rework binding.')
+  }
+  return parsed.data
+}
 export const readKernelAcceptanceRecord = (text: string | null | undefined) =>
   text == null ? null : parseStored(StoredRecord, text, 'kernel_acceptance_invalid')

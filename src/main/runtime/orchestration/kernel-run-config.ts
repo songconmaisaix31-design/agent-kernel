@@ -1,6 +1,9 @@
 import { kernelDependencyBase, assertKernelDependencyBase } from './kernel-dependency-base'
-import { parseKernelStartBinding } from './kernel-acceptance-policy'
-import { StoredAcceptancePolicy, type AcceptancePolicy } from './kernel-acceptance-policy'
+import {
+  parseKernelStartBinding,
+  StoredAcceptancePolicy,
+  type AcceptancePolicy
+} from './kernel-acceptance-policy'
 import type { OrchestrationDb } from './db'
 import { validatePlan, type Plan } from './kernel-plan'
 import { OrchestrationError } from './orchestration-error'
@@ -203,8 +206,7 @@ export function assertKernelWorkerPolicy(
     return
   }
   assertKernelTaskBindings(db, run.id, config)
-  const planned = config.plan.tasks.find((entry) => entry.key === taskId)
-  if (!planned) {
+  if (!config.plan.tasks.some((entry) => entry.key === taskId)) {
     throw new OrchestrationError('kernel_task_unapproved', 'Task is not approved by this Run.')
   }
   const base = kernelDependencyBase(db, run, config, taskId)

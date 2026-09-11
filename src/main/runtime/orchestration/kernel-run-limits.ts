@@ -2,6 +2,9 @@ import type { OrchestrationDb } from './db'
 import { OrchestrationError } from './orchestration-error'
 import { isEquivalentPaneKey } from './db/pane-key-match'
 import { parseWorkerTerminalHostScope } from './worker-terminal-process-liveness'
+import { readKernelAcceptanceRecord, type KernelReworkStartBinding } from './kernel-acceptance-policy'
+import type { KernelRunConfig } from './kernel-run-config'
+import type { RunRow, TaskRow } from './types'
 
 export type KernelLimits = {
   maxConcurrentWorkers: number
@@ -179,4 +182,90 @@ export function assertKernelLimits(
       'This Run has reached its concurrent Worker limit.'
     )
   }
+}
+
+export function assertKernelReworkStart(
+  db: OrchestrationDb,
+  run: RunRow,
+  config: KernelRunConfig,
+  task: TaskRow,
+  base: { baseCommit: string },
+  start: KernelReworkStartBinding,
+  retryOf?: string
+): void {
+  const { kernelRework: rework } = start
+  if (
+    !retryOf ||
+    retryOf !== rework.priorDispatchId ||
+    start.repo !== `id:${config.repoId}` ||
+    start.baseBranch !== base.baseCommit ||
+    start.worktree !== rework.worktreeId ||
+    rework.repoId !== config.repoId
+  ) {
+    throw new OrchestrationError('kernel_rework_invalid', 'Rework binding differs from Kernel policy.')
+  }
+  const prior = db.getDispatchContextById(rework.priorDispatchId)
+  const priorWorker = db.getWorkerDispatch(rework.priorDispatchId)
+  const resource = db.getWorkerTerminalResource(rework.resourceId)
+  const currentResource = db.getWorkerTerminalResourceByOwner(rework.priorDispatchId)
+  const acceptance = readKernelAcceptanceRecord(task.kernel_acceptance)
+  if (
+    !prior ||
+    prior.run_id !== run.id ||
+    prior.task_id !== task.id ||
+    db.getDispatchContext(task.id)?.id !== prior.id ||
+    prior.status !== 'completed' ||
+    prior.assignee_handle !== rework.terminalHandle ||
+    !prior.assignee_pane_key ||
+    !isEquivalentPaneKey(prior.assignee_pane_key, rework.paneKey) ||
+    prior.process_incarnation !== rework.processIncarnation ||
+    !priorWorker ||
+    priorWorker.state !== 'succeeded' ||
+    priorWorker.stage !== 'settled' ||
+    priorWorker.runtime_epoch !== rework.runtimeEpoch ||
+    priorWorker.worktree_id !== rework.worktreeId ||
+    priorWorker.agent_terminal_handle !== rework.terminalHandle ||
+    task.status !== 'completed' ||
+    acceptance?.status === 'accepted' ||
+    acceptance?.status === 'checking' ||
+    hasActiveKernelDownstream(db, config, task.id) ||
+    db.getFederatedDispatch(prior.id) ||
+    !resource ||
+    currentResource?.id !== resource.id ||
+    resource.origin_dispatch_id !== prior.id ||
+    resource.owner_dispatch_id !== prior.id ||
+    resource.worktree_id !== rework.worktreeId ||
+    resource.terminal_handle !== rework.terminalHandle ||
+    !resource.pane_key ||
+    !isEquivalentPaneKey(resource.pane_key, rework.paneKey) ||
+    resource.process_incarnation !== rework.processIncarnation ||
+    resource.host_scope !== rework.hostScope ||
+    resource.ownership_state !== 'owned' ||
+    (resource.release_state !== 'not_requested' &&
+      (resource.release_state !== 'retained' || resource.retained_reason !== 'user_requested'))
+  ) {
+    throw new OrchestrationError(
+      'kernel_rework_invalid',
+      'Rework requires the original unaccepted local Worker resource.'
+    )
+  }
+}
+
+function hasActiveKernelDownstream(db: OrchestrationDb, config: KernelRunConfig, taskId: string) {
+  const pending = [taskId]
+  const visited = new Set<string>()
+  while (pending.length > 0) {
+    const current = pending.pop() as string
+    for (const planned of config.plan.tasks) {
+      if (!planned.dependsOn.includes(current) || visited.has(planned.key)) {
+        continue
+      }
+      if (db.getTask(planned.key)?.status === 'dispatched') {
+        return true
+      }
+      visited.add(planned.key)
+      pending.push(planned.key)
+    }
+  }
+  return false
 }
