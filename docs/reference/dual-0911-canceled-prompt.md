@@ -12,13 +12,13 @@ The first repair in `3b97f0e3118e6fb21771b74e14a496b4fade2a24` was incomplete: i
 
 The corrected detector clears a prior Codex command confirmation only when these causally adjacent, line-anchored UI states form one terminal section:
 
-1. `Would you like to run this command?` and its exact `Press enter to confirm` line;
+1. a known command heading (`Would you like to run this command?` or the D0-observed `Would you like to run the following command?`) and its exact `Press enter to confirm` line;
 2. an immediately following `✗ You canceled the request to run` or `✗ You rejected the request to run` line;
 3. an optional real `• Ran` receipt and its tree-drawing continuation lines;
 4. `■ Conversation interrupted - tell the model what to do differently`;
 5. a standalone `Ask Codex to do anything` input prompt.
 
-The matcher runs after the existing ANSI normalization and reconstructed-tail logic; its scan tolerates multiline redraws, the observed tool receipt, spinner, and status footer. Generic prose cannot be interposed, and quoted, blockquoted, fenced, or detached cancellation transcripts do not qualify.
+The matcher runs after the existing ANSI normalization and reconstructed-tail logic; its scan tolerates multiline redraws, long structured Environment/Reason/Command/choice menus, the observed tool receipt, spinner, and status footer. The command heading is associated across the bounded reconstructed tail instead of an arbitrary 12-line window, while the independent-section and exact post-confirmation checks keep generic prose, quoted, blockquoted, fenced, or detached cancellation transcripts from qualifying.
 
 An older `waiting` hook/lifecycle permission is dismissed only when its observation time precedes the qualifying terminal boundary. Equal-time or newer hook permission, a live permission title, or a newer approval/account/quota/payment/security/trust text prompt remains blocked.
 
@@ -26,13 +26,13 @@ No RPC shape, stream opcode, execution-host behavior, repository assumption, or 
 
 ## Reproduction and validation
 
-The focused runtime regression uses `OrcaRuntimeService.getTerminalInteractiveWait` and `sendTerminalAgentPrompt`, not a copied detector. It reproduces the independent-QA quoted-screen counterexample and proves permission, trust, account, payment, security, quota, hook, and title waits retain `agent_prompt_blocked` with zero writes. Separate positive coverage proves the observed real command cancellation still recovers, including a stale hook predating the terminal boundary.
+The focused runtime regression uses `OrcaRuntimeService.getTerminalInteractiveWait` and `sendTerminalAgentPrompt`, not a copied detector. It reproduces the independent-QA quoted-screen counterexample and proves permission, trust, account, payment, security, quota, hook, and title waits retain `agent_prompt_blocked` with zero writes. Separate positive coverage proves the old heading, the D0-observed heading, and the realistic 20-line wrapped approval menu all recover and submit safely, including a stale hook predating the terminal boundary.
 
 Validation commands and final results:
 
-- `pnpm exec vitest run src/main/runtime/terminal-readiness-codex-prompt.test.ts src/main/runtime/orca-runtime.test.ts --testNamePattern "dismissed Codex canceled command prompt|submits after Codex cancels|keeps .* blocked with zero writes" --reporter=verbose`: 27/27 passed.
-- `pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/agent-prompt-submission-runtime.test.ts --reporter=dot`: 31/31 passed.
-- `pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/terminal-interactive-wait-visibility.test.ts --reporter=dot`: 27/27 passed.
+- `pnpm exec vitest run src/main/runtime/terminal-readiness-codex-prompt.test.ts src/main/runtime/orca-runtime.test.ts --testNamePattern "dismissed Codex canceled command prompt|submits after Codex cancels|submits after cancellation for the|keeps .* blocked with zero writes" --reporter=dot`: 31/31 passed.
+- `pnpm exec vitest run src/main/runtime/orca-runtime.test.ts --reporter=dot`: 1201/1201 passed.
+- `pnpm exec vitest run src/main/runtime/terminal-readiness-codex-prompt.test.ts src/main/runtime/agent-prompt-submission-runtime.test.ts src/main/runtime/terminal-interactive-wait-visibility.test.ts --reporter=dot`: 79/79 passed.
 - `pnpm run typecheck:node`, scoped oxlint, oxfmt, and `git diff --check`: passed.
 
 `pnpm run check:max-lines-ratchet` did not pass: it reported 18 stale `mobile-config` baseline entries that predate and do not overlap this patch. No baseline or configuration file was changed.

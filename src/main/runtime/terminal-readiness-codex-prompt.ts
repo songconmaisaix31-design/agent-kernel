@@ -3,7 +3,7 @@ const LOWER_CREDIT_MODEL = 'switch to gpt-5.6-luna for lower credit usage?'
 const RATE_LIMIT_CONFIRMATION = 'press enter to confirm or esc to go back'
 const CODEX_INPUT_PROMPT_RE = /^(?:[>›]\s*)?ask codex to do anything$/
 const COMMAND_CONFIRMATION_RE = /^press enter to confirm(?: or esc to (?:cancel|go back))?$/
-const COMMAND_PROMPT_RE = /^would you like to run this command\?$/
+const COMMAND_PROMPT_RE = /^would you like to run (?:this|the following) command\?$/
 const CANCELED_COMMAND_RE = /^✗\s+you (?:canceled|rejected) the request to run(?:\s|$)/
 const CONVERSATION_INTERRUPTED_RE =
   /^■\s+conversation interrupted - tell the model what to do differently(?:\.|\s|$)/
@@ -90,8 +90,7 @@ export function isDismissedCodexCanceledCommandPrompt(
 }
 
 function findPreviousLine(lines: IndexedPromptLine[], before: number, pattern: RegExp): number {
-  const floor = Math.max(0, before - 12)
-  for (let index = before - 1; index >= floor; index -= 1) {
+  for (let index = before - 1; index >= 0; index -= 1) {
     if (!lines[index].fenced && pattern.test(lines[index].text)) {
       return index
     }
