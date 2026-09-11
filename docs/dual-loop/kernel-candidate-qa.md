@@ -2,9 +2,15 @@
 
 ## Verdict
 
-Source QA, bounded compiled-output inspection, inactive Windows package inspection, and an isolated nonvisual packaged-runtime smoke passed for candidate `4b207b1a4a442cfe68ba08037eb52cf7a74ad651` on branch `songconmaisaix31-design/dual-0911-kernel-qa`.
+Source QA, bounded compiled-output inspection, inactive Windows package inspection, isolated nonvisual packaged-runtime smoke, and an exact-identity warm-restart smoke passed for candidate `4b207b1a4a442cfe68ba08037eb52cf7a74ad651` on branch `songconmaisaix31-design/dual-0911-kernel-qa`.
 
 This does not establish Electron-rendered UI, installer, signing, publishing, model/account behavior, or acceptance in a stable/D0 profile.
+
+Follow-up canceled-prompt candidates `3b97f0e3118e6fb21771b74e14a496b4fade2a24` and `7349ee2bc945dd71c8d27e3ae18f2c2cd0a22a5f` are **rejected**. The former can clear a real permission prompt when later ordinary output quotes cancellation UI; the latter closes that unsafe path but does not recognize the actual D0 `Would you like to run the following command?` header or a long wrapped approval section, so the intended post-cancellation recovery remains blocked.
+
+Canceled-prompt source candidate `7e6f721aa175cb02edee12004b96e218504b56db`, a direct child of `7349ee2b`, is **accepted for source only**: it passes the grounded positive shapes and all retained active-safety negatives.
+
+Kernel same-owner rework checkpoint `6bf37be657ce204fef30d50523b6dd984c471be8` is **rejected**: its own focused suite fails 7/13, and independent real-source tests prove that it rejects both a physically preserved PTY after an application runtime restart and a second rework of the same retained resource. Its direct child `51e43c9af8ca4c183179ea81ae0020e4f80a6ded` fixes those boundaries and is **accepted for source only**.
 
 ## Provenance
 
@@ -12,6 +18,11 @@ This does not establish Electron-rendered UI, installer, signing, publishing, mo
 - Original first source commit: `1e3f77ea6ee246ace2db17aef04148700a7962d0`
 - Original final source commit: `cdf279512519017976557f7e76f857286f5f1098`
 - Candidate under test: `4b207b1a4a442cfe68ba08037eb52cf7a74ad651`
+- Rejected canceled-prompt follow-up: `3b97f0e3118e6fb21771b74e14a496b4fade2a24`
+- Rejected canceled-prompt source follow-up: `7349ee2bc945dd71c8d27e3ae18f2c2cd0a22a5f`
+- Accepted canceled-prompt source follow-up: `7e6f721aa175cb02edee12004b96e218504b56db`
+- Rejected same-owner rework checkpoint: `6bf37be657ce204fef30d50523b6dd984c471be8`
+- Accepted same-owner rework source follow-up: `51e43c9af8ca4c183179ea81ae0020e4f80a6ded`
 - Initial W-PACK build report commit: `394a633f9fb8dc7a25b356d9d46ea89074951506`
 - Updated native/package report commit: `818e2e89c4d3d2ddae5a53631d71a84734715134`
 - Candidate tree: `592c5da16e77a460aa005ff16fa5f86df6c2af1a`
@@ -129,6 +140,147 @@ git -C <W-QA/runtime-smoke/scratch-folder> init
 
 The repository-required Electron skill was not present after one bounded search of the configured agent, runtime, and plugin skill roots. No rendered UI action, screenshot, accessibility inspection, or Playwright CDP validation was attempted or claimed.
 
+## Isolated packaged warm restart
+
+The exact same `4b207b1a` package was launched again with a second fresh profile under `W-evidence/W-QA/warm-restart`. The exact candidate CLI registered only `warm-restart/scratch-folder` and created a persistent base PowerShell terminal whose first command wrote `WARM_FIRST` under the same evidence subtree; no model, account, stable profile, D0 runtime, or product workspace was contacted.
+
+| Check | Result |
+| --- | --- |
+| First app/runtime identity | PASS; exact `Orca.exe` PID `108608`, runtime `2437283a-06b3-4c24-8163-c31a5e0b655f`, app version `1.4.188` |
+| Persistent terminal identity | PASS; handle `term_5b7d7975-df8c-4d39-b9ec-27eb00f52755`, PTY ID ending `@@cdc353bc`, incarnation `96f5be9c-5109-4378-b933-a392d295206a`; first marker existed |
+| First graceful app close | PASS; six top-level windows belonging only to verified PID `108608` received standard `WM_CLOSE`, and the app exited within 30 seconds |
+| Daemon survival boundary | PASS; candidate CLI reported app/runtime `not_running` after main-process exit, while exact candidate-path daemon PID `125196` remained; no unknown process was stopped |
+| Same-profile relaunch | PASS; exact `Orca.exe` PID `94888`, new runtime `aa7ff9f6-46a3-41a7-9e9e-8b0b09e36d11` |
+| Physical terminal survival | PASS; the new runtime rediscovered the exact same handle, PTY ID, and incarnation ID; it was marked orphaned but remained connected and writable, so no recreated terminal was counted |
+| Post-restart command | PASS; only after full identity equality, exact candidate CLI accepted 191 bytes and the surviving PowerShell wrote `WARM_SECOND` under the evidence subtree |
+| Owned cleanup | PASS with retained negative response; `terminal close` returned `tab_not_found`, but authoritative terminal inventory was zero, PID `94888` exited through its six exact-PID windows, final candidate status was `not_running`, and zero exact candidate-path processes remained |
+
+This first warm restart establishes a real daemon-backed PTY/incarnation surviving an ordinary application close and same-profile relaunch, but its rediscovered entry had `orphaned=true` and `pty:` fallback tab/leaf IDs. It therefore proves physical survival only, not restored managed pane or Worker authority.
+
+A second fresh `W-evidence/W-QA/warm-authority` run closed that limitation using only public native CLI controls. Before close, `terminal create --focus` plus `terminal switch` was allowed to settle until the terminal was `orphaned=false`, `paneRuntimeId=1`, connected/writable, and present in a real persisted visual layout.
+
+| Managed-authority check | Result |
+| --- | --- |
+| Before-close identity | PASS; PID `109376`, runtime `acdb0fcd-e2db-45d9-a24b-34cc8cb73278`, PTY ID ending `@@7674f0e0`, incarnation `577d791b-061d-4d69-b707-2f4dd8490e2b`, real tab `c8ecf094-85d7-4680-b037-df55f47be48b`, leaf `233139df-909c-4eba-b697-a980d3a4f2cf` |
+| Same-profile relaunch | PASS; PID `119200`, runtime `38bf3bef-6298-41ea-9d0a-6f9d917a6669`, graph ready |
+| Physical and managed restoration | PASS; handle was refreshed, but exact PTY ID, incarnation, tab, leaf, worktree, and visual-layout placement remained equal; `orphaned=false`, `paneRuntimeId=1`, connected/writable |
+| Post-proof command | PASS; only after both physical and managed equality, the refreshed handle accepted 182 bytes and the same PowerShell wrote `AUTH_AFTER` under the evidence subtree |
+| Cleanup | PASS; exact terminal close returned `ptyKilled=true`, inventory became zero, exact PID exited through standard `WM_CLOSE`, final status was `not_running`, and zero candidate-path processes remained |
+
+The second run establishes restored managed pane identity despite the changed application/runtime epoch, which directly grounds the rework boundary test below. Neither warm run establishes rendered UI behavior: the repository-required Electron skill remained unavailable, no Playwright CDP action was attempted, and the hidden-window `WM_CLOSE` control supplied no visual assertion.
+
+The scratch PowerShell handle reminted because that shell had no controller-exported agent handle. A bounded source audit confirms the narrower real-agent path: daemon inventory supplies `controllerIdentity.handle` or `session.terminalHandle`; `adoptControllerTerminalHandle` may replace a synthetic handle only for the exact persisted surface and incarnation; and restored orchestration authority retains that controller identity. The actual candidate tests `restores a retained coordinator handle after a late controller inventory` and `recovers exported ORCA_TERMINAL_HANDLE from discovered live PTY sessions` passed 2/2 with 1,184 unrelated tests skipped. Thus a controller-bound D0/P agent can preserve its original handle across the app epoch, while a plain shell demonstrates only the broader generic remint case.
+
+## Canceled Codex prompt follow-up
+
+### Reproduced old failure
+
+W0's preserved D0 evidence shows the exact live lane remained connected and writable after an actual Esc cancellation: Codex rendered `✗ You canceled the request to run`, `■ Conversation interrupted`, and a new `› Ask Codex to do anything`, while terminal state still exposed `agentWait.source=prompt-text` and `reason=codex-interactive-prompt`. The later grounded paste/Return workaround resumed D0, but it neither bypassed an active approval nor proves the detector was correct.
+
+An evidence-local Vitest imports the real `OrcaRuntimeService` from candidate `4b207b1a4a442cfe68ba08037eb52cf7a74ad651`; it does not copy or replace the detector. Given a real permission shape followed by explicit cancellation, interruption, and the new Codex input, desired acceptance failed before any new input write because `assertAgentPromptPermissionSafe` threw `agent_prompt_blocked`. The clean configured run produced 1/1 expected regression failure. An earlier discovery run found no external test under the repository include glob, and the first custom-config run emitted an Electron download message plus an unhandled-rejection warning; neither is counted as defect proof, and the corrected mocked run is the retained source result.
+
+### Fixed candidate review
+
+Git object `3b97f0e3118e6fb21771b74e14a496b4fade2a24` exists locally with exact parent `4b207b1a4a442cfe68ba08037eb52cf7a74ad651` and tree `6b92cd4b3d4045f2bbc20c50f5e880d700c2e876`. Its complete diff is five paths: the two readiness source/test files, `orca-runtime.ts`, `orca-runtime.test.ts`, and one reference document. `git diff --check` passed.
+
+The immutable commit was exported with `git archive` into `W-evidence/W-QA/fixed-3b97f0e3`; the extracted `orca-runtime.ts` blob `56b240621fd5e47ca9df1694a0db8c019896d4b2` exactly matches the Git object. Tests used the existing dependency tree through an evidence-local junction and did not read W-INPUT's worktree.
+
+| Check | Result |
+| --- | --- |
+| W-INPUT focused matcher suite | PASS; 15/15 |
+| W-INPUT selected caller regression | PASS; 2/2 selected, 1,185 skipped |
+| Existing prompt-submission suite | PASS; 31/31 |
+| Existing interactive-wait suite | PASS; 27/27 |
+| Node TypeScript check | PASS; `tsc --noEmit -p config/tsconfig.node.json --composite false` |
+| Independent actual-source caller matrix | **FAIL**; 9/10 passed, quoted exact cancellation UI unsafely cleared a real permission prompt |
+
+The independent matrix confirms the intended explicit-cancellation recovery succeeds. It also preserves blocking for a newer active permission, account login, payment, security review, real quota reminder, workspace trust prompt, newer permission hook, and live permission title.
+
+The failing counterexample is caller-level, not a helper-only assertion:
+
+```text
+Permission required
+Allow once
+Allow always
+Reject
+For reference, this is a quoted old screen:
+✗ You canceled the request to run & old-tool.cmd
+■ Conversation interrupted - tell the model what to do differently.
+› Ask Codex to do anything
+```
+
+Expected: `getTerminalInteractiveWait` remains `{source: prompt-text, reason: codex-interactive-prompt}`, `sendTerminalAgentPrompt` rejects `agent_prompt_blocked`, and no bytes are written. Actual at `3b97f0e3`: wait was `null`, submission resolved `{accepted: true, bytesWritten: 19}`, and the PTY received the bracketed `unsafe` paste plus Enter. `isDismissedCodexCanceledCommandPrompt` ignores the intervening ordinary prose and accepts the later line-anchored quoted markers as authoritative cancellation state.
+
+This exact expected/actual was escalated to W0 for the W-INPUT owner. Candidate `3b97f0e3` is not accepted and must not be packaged or delivered as the readiness fix.
+
+### Corrected input candidate
+
+Git object `7349ee2bc945dd71c8d27e3ae18f2c2cd0a22a5f` is directly parented from rejected `3b97f0e3`, has tree `d5b24dc100d1089e78609b67ccc4e180993550bf`, and changes only the reference document, detector source/test, and `orca-runtime.test.ts`; `git diff --check` passed. W-QA exported it to `W-evidence/W-QA/input-7349ee2b` with archive SHA-256 and Git provenance in `input-7349ee2b-provenance.json`.
+
+| Check | Result |
+| --- | --- |
+| Submitted detector suite | PASS; 19/19 |
+| Full actual `orca-runtime` caller suite | PASS; 1,199/1,199 |
+| Independent actual-source caller matrix | **FAIL** after grounded D0 expansion; 10 passed, 2 failed |
+| Node TypeScript check | PASS; `tsc --noEmit -p config/tsconfig.node.json --composite false` |
+
+The original 10-case independent matrix accepts its synthetic `this command` cancellation boundary and rejects the prior exact quoted-UI counterexample before any unsafe write. It also preserves fail-closed behavior for newer active permission, account, payment, security, quota, workspace trust, permission hook, and live permission-title cases.
+
+After W0 supplied the grounded current D0 header, the same real caller was expanded with two required positive cases. A case differing only by `Would you like to run the following command?` expected wait `null` and safe new-prompt submission, but actual wait remained `{source: prompt-text, reason: codex-interactive-prompt, since: 2000}`. A realistic 17-line Environment/Reason/wrapped-command/three-choice section before `Press enter to confirm` also remained blocked because the header differs and `findPreviousLine` has a fixed 12-line floor. Fail-closed rejection is safe but is not feature completion; W-QA therefore rejects `7349ee2b`. It was not packaged or launched, so no runtime or rendered acceptance is claimed.
+
+### Grounded input candidate
+
+Git object `7e6f721aa175cb02edee12004b96e218504b56db` is directly parented from rejected `7349ee2b`, has tree `e2a26ad50cf3f0080c5c4c04ff7b9a28e6575283`, changes the same four paths, and passes `git diff --check`. Its complete Git archive is at `W-evidence/W-QA/input-7e6f721a-complete`; the first system extraction stalled and remains explicitly identified as the incomplete `input-7e6f721a` directory, which was not used for tests. `input-7e6f721a-provenance.json` identifies the complete snapshot and archive hash.
+
+| Check | Result |
+| --- | --- |
+| Expanded independent actual-source caller matrix | PASS; 12/12 |
+| Submitted detector suite | PASS; 21/21 |
+| Node TypeScript check | PASS; `tsc --noEmit -p config/tsconfig.node.json --composite false` |
+
+The two grounded positives now recover: the actual `Would you like to run the following command?` heading and the realistic long Environment/Reason/wrapped-command/three-choice section both clear after explicit cancel/interruption/new input. The synthetic positive and all permission, account, payment, security, quota, trust, quoted-UI, newer-hook, and live-title negative cases remain green with blocked unsafe writes. W-QA accepts `7e6f721a` for source only; it was not packaged or launched, so no runtime or rendered acceptance is claimed.
+
+## Same-owner Kernel rework follow-up
+
+Git object `6bf37be657ce204fef30d50523b6dd984c471be8` has exact parent `4b207b1a4a442cfe68ba08037eb52cf7a74ad651` and tree `4a3061b69ebdbebc3fd8a4f10bfb70ef79543ad7`. Its complete 11-path diff and `git diff --check` passed. W-QA exported that object with `git archive` to `W-evidence/W-QA/rework-6bf37be6`; the archive SHA-256 is `2B7FA0647E541653C9B97536021F5D1C71D0592859F32F6E2AC110D0D8F5A90A`, and per-path blob IDs are preserved in `rework-6bf37be6-provenance.json`.
+
+| Check | Result |
+| --- | --- |
+| Node TypeScript check | PASS; `tsc --noEmit -p config/tsconfig.node.json --composite false` |
+| Checkpoint's focused rework suite | **FAIL**; 7 failed, 6 passed |
+| Independent real-source boundary suite | **FAIL**; both expected admissions rejected |
+| Public Kernel `runUse` remint suite | **FAIL**; restored original 1 failed, unrelated identity 1 passed |
+
+The checkpoint's claimed success test expected a fresh Dispatch but received `kernel_unsupported_path: Kernel requires a local Git repository`. Five other cases expecting rework/config/generation decisions were preempted by the same local-repo admission, while the wrong-terminal-owner case expected `kernel_rework_invalid` but received `consumer_fenced`. These are failures of the submitted test/source combination with dependencies present, not an unmaterialized-dependency limitation.
+
+The independent test imports `prepareKernelReworkStart` and `assertKernelReworkStart` from the immutable snapshot; it does not copy either implementation. It reproduces two additional caller/policy defects:
+
+- With terminal handle, pane, worktree, resource, and `process_incarnation` unchanged, but current runtime ID changed after the ordinary app restart physically proven above, expected same-owner admission instead rejects `kernel_rework_invalid: Original Worker terminal identity is no longer current` because persisted `worker.runtime_epoch` must equal the new app runtime ID.
+- After one successful resource transfer, the retained resource correctly has `owner_dispatch_id=ctx_second` while immutable provenance remains `origin_dispatch_id=ctx_first`. A second rework from `ctx_second`, otherwise exact, expected admission but rejects `kernel_rework_invalid: Rework requires the original unaccepted local Worker resource` because `origin_dispatch_id` is required to equal the immediately prior dispatch.
+- On the actual registered `orchestration.runUse` method with real SQLite and `OrcaRuntimeService`, an initial Kernel owner whose handle remints across restart while its pane/PTY/incarnation remain the same is rejected by `prepareKernelRunBinding -> assertKernelRunOwner` with `consumer_fenced: Run has a different or invalid current owner` before `bindRun` can refresh the handle. The paired unrelated-pane/incarnation negative correctly remains fenced.
+
+The public `runUse` remint rejection is a real generic gap, but the controller audit narrows this batch's required fix: an actual controller-bound Codex coordinator can restore the exact original handle. No pane-only relaxation is justified; the safe target is exact original handle/pane/incarnation plus current controller authority across a changed app runtime epoch, with synthetic, unrelated, or unknown identities still rejected.
+
+Both exact expected/actual failures were escalated to W0 for the W-REWORK owner. Checkpoint `6bf37be6` is not accepted; no live D0 operation, application launch, model session, or runtime/profile mutation was used to test it.
+
+### Corrected rework candidate
+
+Git object `51e43c9af8ca4c183179ea81ae0020e4f80a6ded` is directly parented from rejected `6bf37be6`, has tree `5a6c807b450a989f56094198df272220dbcded4a`, and its complete `4b207b1a..51e43c9a` source chain changes 12 paths. Both the direct child diff and full chain pass `git diff --check`. W-QA exported the immutable object to `W-evidence/W-QA/rework-51e43c9a`; the archive SHA-256 and every changed-path blob are recorded in `rework-51e43c9a-provenance.json`.
+
+| Check | Result |
+| --- | --- |
+| Submitted rework/config/limits/ordinary-start suites | PASS; 4 files, 229/229 |
+| Node TypeScript check | PASS; `tsc --noEmit -p config/tsconfig.node.json --composite false` |
+| Corrected independent actual-source boundary matrix | PASS; 6/6 |
+
+The first mechanical reuse of the old QA file produced two harness errors because `51e43c9a` added `getOrchestrationDispatchAuthority` and moved `assertKernelReworkStart`; that run is retained but is not counted as a product failure. The corrected test imports the new real implementation and supplies the required current authority and non-orphan managed-terminal facts.
+
+The corrected matrix admits both intended positives: the same pane/incarnation/resource across a changed current runtime epoch, and a second rework whose resource keeps the first dispatch as immutable origin while the second dispatch is current owner. It independently rejects missing current authority, wrong current runtime, wrong process incarnation, and an orphaned terminal. The submitted suites additionally preserve lineage integrity, attempt/concurrency limits, accepted/downstream/generation races, ordinary dependency rejection, low-level dispatch recheck after asynchronous agent detection, policy recheck at DB entry, and dependency-base recheck immediately before terminal delivery.
+
+Source inspection confirms the new dispatch stores the current runtime epoch while preserving the prior historical epoch in its rework binding. Current authority is tied to the requested terminal, current runtime, managed non-orphan worktree, equivalent pane, exact historical/resource/current process incarnation, and equal local host scope. The broader plain-shell `runUse` handle-remint gap remains a known limitation, but controller-bound Codex agents can restore the exact exported handle as documented above; no pane-only owner relaxation is part of this source acceptance.
+
+W-QA accepts `51e43c9a` for source only. It was not packaged, launched, or used against D0, so combined-package, live controller restoration, native switch, and rendered UI remain outside this verdict.
+
 ## Remote delivery
 
 - Source-QA commit `4706f942af80c795826145047062cf0211c557e9` was pushed to both `origin/songconmaisaix31-design/dual-0911-kernel-qa` and `standalone/songconmaisaix31-design/dual-0911-kernel-qa` without force.
@@ -136,8 +288,10 @@ The repository-required Electron skill was not present after one bounded search 
 
 ## Remaining limits
 
-- The runtime validation was deliberately nonvisual and limited to isolated process readiness, candidate CLI RPC, one scratch folder/terminal command, and owned-resource shutdown; it did not exercise product or model/account work.
+- The runtime validation was deliberately nonvisual and limited to isolated process readiness, candidate CLI RPC, evidence-local scratch commands, exact-identity warm restart, and owned-resource shutdown; it did not exercise product or model/account work.
 - The package is an unpacked directory, not an installer; signing and publishing were not performed.
 - No Electron skill was available in this session, so no rendered Orca UI validation was attempted or claimed.
 - Visual Studio native compilation remains unavailable; W-QA did not rebuild native code or install system tooling.
 - Stable and D0 runtime profiles, credentials, running applications, Docker resources, production code, lockfiles, and root configuration were not changed. The only generated runtime/profile state is the disposable evidence-local tree documented above.
+- The rejected `3b97f0e3` follow-up was source-tested only; no application, packaged candidate, model session, D0 replacement, rendered UI, or control workaround was launched for it.
+- The rejected `6bf37be6` rework checkpoint was source-tested only; it was not used to replace the active Fork or mutate any live runtime.
