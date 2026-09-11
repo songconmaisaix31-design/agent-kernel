@@ -10,7 +10,7 @@ import {
   readKernelRunConfig
 } from '../../kernel-run-config'
 import { readKernelReworkStartBinding } from '../../kernel-acceptance-policy'
-import { assertKernelReworkStart } from '../../kernel-run-limits'
+import { assertKernelReworkStart } from '../../kernel-rework-admission'
 import { kernelDependencyBase } from '../../kernel-dependency-base'
 
 export function createStartingWorkerDispatch(
@@ -52,7 +52,10 @@ export function createStartingWorkerDispatch(
     if (rework) {
       const config = run && readKernelRunConfig(run)
       if (!run || !config) {
-        throw new OrchestrationError('kernel_rework_invalid', 'Rework requires an active Kernel policy.')
+        throw new OrchestrationError(
+          'kernel_rework_invalid',
+          'Rework requires an active Kernel policy.'
+        )
       }
       if (
         params.expectedKernelGeneration === undefined ||
