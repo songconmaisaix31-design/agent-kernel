@@ -265,7 +265,7 @@ Both exact expected/actual failures were escalated to W0 for the W-REWORK owner.
 
 ### Corrected rework candidate
 
-Git object `51e43c9af8ca4c183179ea81ae0020e4f80a6ded` is directly parented from rejected `6bf37be6`, has tree `5a6c807b450a989f56094198df272220dbcded4a`, and its complete `4b207b1a..51e43c9a` source chain changes 12 paths. Both the direct child diff and full chain pass `git diff --check`. W-QA exported the immutable object to `W-evidence/W-QA/rework-51e43c9a`; the archive SHA-256 and every changed-path blob are recorded in `rework-51e43c9a-provenance.json`.
+Git object `51e43c9af8ca4c183179ea81ae0020e4f80a6ded` is directly parented from rejected `6bf37be6`, has tree `5a6c807b450a989f56094198df272220dbcded4a`, and its complete `4b207b1a..51e43c9a` source chain changes 11 net paths. `orchestration-kernel.test.ts` was touched in the ordered intermediate commits but is tree-equal to the base at the final candidate. Both the direct child diff and full chain pass `git diff --check`. W-QA exported the immutable object to `W-evidence/W-QA/rework-51e43c9a`; the archive SHA-256 and every changed-path blob are recorded in `rework-51e43c9a-provenance.json`.
 
 | Check | Result |
 | --- | --- |
