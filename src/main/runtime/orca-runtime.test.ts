@@ -16846,6 +16846,18 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  const canceledCodexCommandBoundary = [
+    'Would you like to run this command?\n',
+    'Press enter to confirm\n',
+    '✗ You canceled the request to run & tool.cmd\n',
+    '• Ran & tool.cmd\n',
+    '  └ (no output)\n',
+    '■ Conversation interrupted - tell the model what to do differently.\n',
+    '› Ask Codex to do anything\n',
+    '  ⡀   ⠄\n',
+    'gpt-6-astra xhigh · C:\\workspace · task\n'
+  ].join('')
+
   it('submits after Codex cancels a command prompt and renders a new input turn', async () => {
     vi.useFakeTimers()
     try {
@@ -16871,44 +16883,113 @@ describe('OrcaRuntimeService', () => {
         Date.now()
       )
       vi.setSystemTime(2_000)
-      runtime.onPtyData(
-        'pty-bg',
-        [
-          'Would you like to run this command?\n',
-          'Press enter to confirm\n',
-          '✗ You canceled the request to run & tool.cmd\n',
-          '• Ran & tool.cmd\n',
-          '  └ (no output)\n',
-          '■ Conversation interrupted - tell the model what to do differently.\n',
-          '› Ask Codex to do anything\n',
-          '  ⡀   ⠄\n',
-          'gpt-6-astra xhigh · C:\\workspace · task\n'
-        ].join(''),
-        Date.now()
-      )
+      runtime.onPtyData('pty-bg', canceledCodexCommandBoundary, Date.now())
 
       await expect(runtime.getTerminalInteractiveWait(handle)).resolves.toBeNull()
       const submission = runtime.sendTerminalAgentPrompt(handle, 'continue')
       await vi.runAllTimersAsync()
       await expect(submission).resolves.toMatchObject({ handle, accepted: true })
       expect(writes.at(-1)).toBe('\r')
-
-      vi.setSystemTime(3_000)
-      runtime.onPtyData(
-        'pty-bg',
-        '\x1b]9999;{"state":"waiting","agentType":"codex"}\x07',
-        Date.now()
-      )
-      await expect(runtime.getTerminalInteractiveWait(handle)).resolves.toMatchObject({
-        source: 'hook'
-      })
-      await expect(runtime.sendTerminalAgentPrompt(handle, 'unsafe')).rejects.toThrow(
-        'agent_prompt_blocked'
-      )
     } finally {
       vi.useRealTimers()
     }
   })
+
+  const blockedCanceledCodexCases: [string, string[]][] = [
+    [
+      'quoted cancellation UI',
+      [
+        'Permission required\nAllow once\nAllow always\nReject\n',
+        'For reference, this is a quoted old screen:\n',
+        '✗ You canceled the request to run & old-tool.cmd\n',
+        '■ Conversation interrupted - tell the model what to do differently.\n',
+        '› Ask Codex to do anything\n'
+      ]
+    ],
+    [
+      'fenced cancellation UI',
+      [
+        `Permission required\nAllow once\nAllow always\nReject\n\`\`\`text\n`,
+        canceledCodexCommandBoundary,
+        '\n```\n'
+      ]
+    ],
+    [
+      'blockquoted cancellation UI',
+      [
+        'Permission required\nAllow once\nAllow always\nReject\n',
+        canceledCodexCommandBoundary
+          .split('\n')
+          .map((line) => `> ${line}\n`)
+          .join('')
+      ]
+    ],
+    [
+      'interposed prose',
+      [
+        canceledCodexCommandBoundary.replace(
+          'Press enter to confirm\n✗',
+          'Press enter to confirm\nCodex quoted this:\n✗'
+        )
+      ]
+    ],
+    ...[
+      ['newer permission prompt', 'Permission required\nAllow once\nAllow always\nReject'],
+      ['newer account prompt', 'Codex account login required\nPress enter to continue'],
+      ['newer payment prompt', 'Codex payment method required\nPress enter to continue'],
+      ['newer security prompt', 'Codex security review required\nPress enter to continue'],
+      [
+        'newer quota prompt',
+        'Approaching rate limits\nSwitch to gpt-5.6-luna for lower credit usage?\nPress enter to confirm or esc to go back'
+      ],
+      ['newer trust prompt', 'Do you trust this workspace?']
+    ].map(([scenario, prompt]): [string, string[]] => [
+      scenario,
+      [canceledCodexCommandBoundary, prompt]
+    ]),
+    [
+      'newer permission hook',
+      [canceledCodexCommandBoundary, '\x1b]9999;{"state":"waiting","agentType":"codex"}\x07']
+    ],
+    [
+      'live permission title',
+      [canceledCodexCommandBoundary, '\x1b]0;Codex waiting for permission\x07']
+    ]
+  ]
+
+  it.each(blockedCanceledCodexCases)(
+    'keeps %s blocked with zero writes',
+    async (_scenario, outputs) => {
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => 'codex'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'codex'
+      })
+      outputs.forEach((output) => runtime.onPtyData('pty-bg', output, Date.now()))
+
+      const wait = await runtime.getTerminalInteractiveWait(handle)
+      expect(wait).not.toBeNull()
+      if (_scenario === 'quoted cancellation UI') {
+        expect(wait).toMatchObject({
+          source: 'prompt-text',
+          reason: 'codex-interactive-prompt'
+        })
+      }
+      await expect(runtime.sendTerminalAgentPrompt(handle, 'unsafe')).rejects.toThrow(
+        'agent_prompt_blocked'
+      )
+      expect(writes).toEqual([])
+    }
+  )
 
   it('does not classify unrelated press-enter prompts as Codex blocked prompts', async () => {
     vi.useFakeTimers()

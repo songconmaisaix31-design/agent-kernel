@@ -57,6 +57,7 @@ describe('dismissed Codex rate-limit reminder', () => {
 
 describe('dismissed Codex canceled command prompt', () => {
   const canceledCommand = [
+    'would you like to run this command?',
     'press enter to confirm',
     "✗ You canceled the request to run & 'C:/workspace/tool.cmd'",
     '■ Conversation interrupted - tell the model what to do differently. Something went wrong?',
@@ -67,18 +68,23 @@ describe('dismissed Codex canceled command prompt', () => {
 
   it('accepts the observed canceled request followed by a new input prompt', () => {
     const text = canceledCommand.toLowerCase()
-    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(true)
+    const blockedIndex = text.indexOf('press enter to confirm')
+    expect(isDismissedCodexCanceledCommandPrompt(text, blockedIndex)).toBe(true)
     expect(computeTerminalTailWaitState(text.split('\n'), '', '').signal).toBeNull()
   })
 
   it('accepts an explicit rejection boundary followed by a new input prompt', () => {
     const text = canceledCommand.replace('canceled', 'rejected').toLowerCase()
-    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(true)
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(true)
   })
 
   it('does not treat an ordinary idle prompt as a dismissal boundary', () => {
     const text = ['press enter to confirm', '› Ask Codex to do anything'].join('\n').toLowerCase()
-    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(false)
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(false)
   })
 
   it('does not accept quoted cancellation prose without Codex status markers', () => {
@@ -90,7 +96,40 @@ describe('dismissed Codex canceled command prompt', () => {
     ]
       .join('\n')
       .toLowerCase()
-    expect(isDismissedCodexCanceledCommandPrompt(text, text.indexOf(confirmation))).toBe(false)
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(false)
+  })
+
+  it('does not accept exact UI lines introduced as quoted model output', () => {
+    const text = `for reference, this is a quoted old screen:\n\n${canceledCommand}`.toLowerCase()
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(false)
+  })
+
+  it.each([
+    ['fenced', `\`\`\`text\n${canceledCommand}\n\`\`\``],
+    [
+      'blockquoted',
+      canceledCommand
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n')
+    ],
+    [
+      'interposed prose',
+      canceledCommand.replace(
+        'press enter to confirm\n✗',
+        'press enter to confirm\ncodex quoted this:\n✗'
+      )
+    ]
+  ])('does not accept a %s cancellation transcript', (_kind, value) => {
+    const text = value.toLowerCase()
+    expect(
+      isDismissedCodexCanceledCommandPrompt(text, text.indexOf('press enter to confirm'))
+    ).toBe(false)
+    expect(computeTerminalTailWaitState(text.split('\n'), '', '').signal).not.toBeNull()
   })
 
   it('keeps a newer active permission prompt blocked', () => {
