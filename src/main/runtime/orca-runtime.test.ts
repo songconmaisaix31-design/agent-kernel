@@ -16846,6 +16846,70 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('submits after Codex cancels a command prompt and renders a new input turn', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000)
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          acknowledgeAgentPromptSubmit(runtime, 'pty-bg', data)
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => 'codex'
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'codex'
+      })
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"waiting","agentType":"codex"}\x07',
+        Date.now()
+      )
+      vi.setSystemTime(2_000)
+      runtime.onPtyData(
+        'pty-bg',
+        [
+          'Would you like to run this command?\n',
+          'Press enter to confirm\n',
+          '✗ You canceled the request to run & tool.cmd\n',
+          '• Ran & tool.cmd\n',
+          '  └ (no output)\n',
+          '■ Conversation interrupted - tell the model what to do differently.\n',
+          '› Ask Codex to do anything\n',
+          '  ⡀   ⠄\n',
+          'gpt-6-astra xhigh · C:\\workspace · task\n'
+        ].join(''),
+        Date.now()
+      )
+
+      await expect(runtime.getTerminalInteractiveWait(handle)).resolves.toBeNull()
+      const submission = runtime.sendTerminalAgentPrompt(handle, 'continue')
+      await vi.runAllTimersAsync()
+      await expect(submission).resolves.toMatchObject({ handle, accepted: true })
+      expect(writes.at(-1)).toBe('\r')
+
+      vi.setSystemTime(3_000)
+      runtime.onPtyData(
+        'pty-bg',
+        '\x1b]9999;{"state":"waiting","agentType":"codex"}\x07',
+        Date.now()
+      )
+      await expect(runtime.getTerminalInteractiveWait(handle)).resolves.toMatchObject({
+        source: 'hook'
+      })
+      await expect(runtime.sendTerminalAgentPrompt(handle, 'unsafe')).rejects.toThrow(
+        'agent_prompt_blocked'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not classify unrelated press-enter prompts as Codex blocked prompts', async () => {
     vi.useFakeTimers()
     try {
