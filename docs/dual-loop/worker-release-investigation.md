@@ -1,7 +1,7 @@
 # W-LIFE worker release investigation
 
-Round: `dual-20260911-103612`  
-Runtime observed: `9eff2735-3c29-48e2-8ce4-2446b5513f2b` / Orca `1.4.199`  
+Round: `dual-20260911-103612`
+Runtime observed: `9eff2735-3c29-48e2-8ce4-2446b5513f2b` / Orca `1.4.199`
 Source reviewed: `01bd406abb787a6b2fd8064e66bcefb75971b8ff` / `1.4.188` (`v1.4.188-72-g01bd406ab`)
 
 ## Finding
@@ -79,4 +79,3 @@ broad terminal close. That validates the boundary rather than weakening it.
 - Focused Vitest command was attempted but not executable: this worktree has no
   `node_modules`, and `pnpm exec vitest` returned `Command "vitest" not found`.
   No dependency installation was performed.
-
