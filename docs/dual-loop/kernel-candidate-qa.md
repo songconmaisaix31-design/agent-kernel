@@ -1,10 +1,10 @@
-# Kernel candidate source QA
+# Kernel candidate QA
 
 ## Verdict
 
-Source QA, bounded compiled-output inspection, and inactive Windows package inspection passed for candidate `4b207b1a4a442cfe68ba08037eb52cf7a74ad651` on branch `songconmaisaix31-design/dual-0911-kernel-qa`.
+Source QA, bounded compiled-output inspection, inactive Windows package inspection, and an isolated nonvisual packaged-runtime smoke passed for candidate `4b207b1a4a442cfe68ba08037eb52cf7a74ad651` on branch `songconmaisaix31-design/dual-0911-kernel-qa`.
 
-This does not establish full application launch, Electron-rendered UI, installer, signing, publishing, or running-profile acceptance.
+This does not establish Electron-rendered UI, installer, signing, publishing, model/account behavior, or acceptance in a stable/D0 profile.
 
 ## Provenance
 
@@ -81,6 +81,54 @@ Key SHA-256 values: `Orca.exe` = `9AD72561B4AF104629E1F93F1877AA03969AE3631B45EA
 
 These results establish structural, byte-provenance, CLI-help, and native-load evidence for the inactive directory only. They do not claim the app starts, renders, or operates correctly.
 
+## Isolated packaged-runtime smoke
+
+The exact packaged candidate was then launched from `C:/Users/DW/AppData/Local/OrcaKernelLab/night/dual-20260911-103612/kernel-candidate/win-unpacked/Orca.exe`. Source inspection was against exact source `4b207b1a4a442cfe68ba08037eb52cf7a74ad651`, not the report branch tip:
+
+- `configureDevUserDataPath` accepts packaged `ORCA_USER_DATA_PATH` only when `ORCA_EXPERIMENT_CODEX_SYSTEM_HOME` enables the guarded experiment path. Both paths must be absolute, under `OrcaKernelLab`, and link-free; startup succeeded and a post-run scan found zero reparse points.
+- `configureOrcaUserDataPathEnv` canonicalizes the selected Electron `userData` into `ORCA_USER_DATA_PATH`; the CLI reads `orca-runtime.json` from exactly that directory and requires a local named-pipe transport plus an authentication token.
+- Electron derives `requestSingleInstanceLock()` identity from the configured `userData`, and the source acquires the lock only after configuring that path. This isolates discovery metadata and the single-instance namespace from stable Orca and D0.
+
+The fresh paths were `W-evidence/W-QA/runtime-smoke/profile`, `system-codex-home`, and `scratch-folder`; all remained under the authorized evidence directory. The launch used:
+
+```powershell
+Start-Process -FilePath <exact-candidate-Orca.exe> -WorkingDirectory <win-unpacked> -WindowStyle Hidden -PassThru -Environment @{
+  ORCA_EXPERIMENT_CODEX_SYSTEM_HOME = <W-QA/runtime-smoke/system-codex-home>
+  ORCA_USER_DATA_PATH = <W-QA/runtime-smoke/profile>
+  ORCA_CLI_COMMAND = <exact-candidate-resources/bin/orca.exe>
+  ORCA_STARTUP_DIAGNOSTICS = '1'
+}
+```
+
+| Check | Result |
+| --- | --- |
+| Exact process identity | PASS; PID `121304`, executable exactly the candidate `Orca.exe` (SHA-256 `9AD72561B4AF104629E1F93F1877AA03969AE3631B45EA1583426D569465C5CC`) |
+| Profile discovery | PASS; `profile/orca-runtime.json` named PID `121304`, runtime `50b52983-fbff-441e-9e84-8d59bb0703e7`, and a candidate-owned named pipe; the preserved evidence copy redacts its token |
+| Exact candidate CLI status | PASS; `resources/bin/orca.exe status --json` returned app version `1.4.188`, `runtime.state=ready`, `reachable=true`, graph `ready`, PID `121304`, and the same runtime ID |
+| Runtime/daemon command path | PASS; candidate CLI `repo add` registered only the scratch Git folder, and `terminal create` ran `terminal-smoke.ps1` in that folder; CLI read returned `CANDIDATE_TERMINAL_OK_2`, and marker/cwd files independently matched |
+| Terminal cleanup | PASS with one bounded observation; the first exact-handle close succeeded, the second returned `tab_not_found` after its command completed, and authoritative terminal list before/after `terminal stop` contained zero live terminals (`stopped: 0`) |
+| Graceful application stop | PASS; `CloseMainWindow()` could not address a hidden window, so six top-level windows belonging only to verified PID `121304` received standard `WM_CLOSE`; all posts succeeded and the process exited within 30 seconds |
+| Post-stop candidate state | PASS; candidate CLI status returned `app.running=false`, `runtime.state=not_running`, `reachable=false`, and zero processes remained under the candidate package path |
+| Existing runtime preservation | PASS; stable Orca remained PID `81484`, runtime `9eff2735-3c29-48e2-8ce4-2446b5513f2b`, `ready/reachable` before and after; read-only D0 metadata still named runtime `1bd39503-94d2-4045-8e1f-4419dd8d0f83` and its PID `117424` remained present |
+
+The read-only and scratch commands used the exact candidate CLI with the three isolation environment variables above:
+
+```powershell
+& <exact-candidate-cli> status --json
+git -C <W-QA/runtime-smoke/scratch-folder> init
+& <exact-candidate-cli> repo add --path <scratch-folder> --json
+& <exact-candidate-cli> terminal create --worktree path:<scratch-folder> --title W-QA-RUNTIME-SMOKE-2 --command "powershell.exe -NoLogo -NoProfile -File <W-QA/runtime-smoke/terminal-smoke.ps1>" --json
+& <exact-candidate-cli> terminal wait --terminal <exact-handle> --for exit --timeout-ms 45000 --json
+& <exact-candidate-cli> terminal read --terminal <exact-handle> --limit 100 --json
+& <exact-candidate-cli> terminal close --terminal <exact-handle> --json
+& <exact-candidate-cli> terminal list --worktree path:<scratch-folder> --json
+& <exact-candidate-cli> terminal stop --worktree path:<scratch-folder> --json
+```
+
+`terminal wait --for exit` timed out because the supplied startup command returned to Orca's persistent PowerShell terminal rather than terminating it; this does not weaken command execution evidence, which was independently present in CLI output and two scratch files. The second close's `tab_not_found` is retained as exact negative evidence rather than presented as a clean close response; the subsequent authoritative inventory proved no live terminal remained.
+
+The repository-required Electron skill was not present after one bounded search of the configured agent, runtime, and plugin skill roots. No rendered UI action, screenshot, accessibility inspection, or Playwright CDP validation was attempted or claimed.
+
 ## Remote delivery
 
 - Source-QA commit `4706f942af80c795826145047062cf0211c557e9` was pushed to both `origin/songconmaisaix31-design/dual-0911-kernel-qa` and `standalone/songconmaisaix31-design/dual-0911-kernel-qa` without force.
@@ -88,8 +136,8 @@ These results establish structural, byte-provenance, CLI-help, and native-load e
 
 ## Remaining limits
 
-- No full Orca application launch, daemon-service start, or profile-backed workflow was performed.
+- The runtime validation was deliberately nonvisual and limited to isolated process readiness, candidate CLI RPC, one scratch folder/terminal command, and owned-resource shutdown; it did not exercise product or model/account work.
 - The package is an unpacked directory, not an installer; signing and publishing were not performed.
 - No Electron skill was available in this session, so no rendered Orca UI validation was attempted or claimed.
 - Visual Studio native compilation remains unavailable; W-QA did not rebuild native code or install system tooling.
-- No runtime profile, credentials, running application, Docker resource, production code, lockfile, or root configuration was changed.
+- Stable and D0 runtime profiles, credentials, running applications, Docker resources, production code, lockfiles, and root configuration were not changed. The only generated runtime/profile state is the disposable evidence-local tree documented above.
